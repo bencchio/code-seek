@@ -23,6 +23,7 @@ Completed increments per cycle. Items here are done and should not appear in the
 | 0.5.3   | 2026-09-08 | Elixir parser (`.ex`/`.exs`): defmodule, def/defp, macros, protocol, impl, struct; entity `kind` |
 | 0.5.4   | 2026-09-08 | GitHub-ready main: MIT license, public readme, `main` rebuilt sanitized, git hooks activated |
 | 0.5.5   | 2026-09-08 | Packaging: `install.sh`, AUR `PKGBUILD`, crate metadata; scan honors `.gitignore` with `--no-gitignore` opt-out |
+| 0.6.0   | 2026-09-08 | Release — closes the 0.5.x cycle. Public history published with bare-version tags; release script attaching the Arch package |
 
 ## Cycle 0.3.x — Dependencies & robustness
 

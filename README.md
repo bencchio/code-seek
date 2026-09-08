@@ -10,7 +10,7 @@ Explore the functional structure of a repository from the CLI.
 
 ## Status
 
-**v0.5.5** — installable anywhere: install script, AUR recipe, and scan that honors `.gitignore`.
+**v0.6.0** — published: releases ship the Arch package, installable from source, cargo, or the AUR recipe.
 
 See [`docs/rules/mcp.md`](docs/rules/mcp.md) for MCP setup and
 [`docs/CHANGELOG.md`](docs/CHANGELOG.md) for release history.
@@ -53,7 +53,20 @@ source ~/.bashrc
 
 **Option C — Arch Linux:**
 
-The AUR recipe lives in [`packaging/aur/PKGBUILD`](packaging/aur/PKGBUILD).
+Every release ships the built package as an asset. Download the
+`.pkg.tar.zst` from the [latest release](https://github.com/bencchio/code-seek/releases/latest)
+and install it:
+
+```bash
+sudo pacman -U code-seek-*-x86_64.pkg.tar.zst
+```
+
+To build it yourself instead, the recipe lives in
+[`packaging/aur/PKGBUILD`](packaging/aur/PKGBUILD):
+
+```bash
+cd packaging/aur && makepkg -si
+```
 
 Verify any of them with:
 

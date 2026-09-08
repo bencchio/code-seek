@@ -2,6 +2,20 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.6.0] — 2026-09-08
+
+Publish the project, closing the release readiness cycle.
+
+### Added
+
+- **Release script** (`packaging/github-release.sh`): publishes a GitHub release for a tag, building the Arch package from the archive GitHub serves and attaching it. Takes the release notes from the tag's own message, offers a dry run, and replaces the asset in place when the release already exists.
+
+### Changed
+
+- **Published history**: the public repository now carries one commit per cycle-closing version plus the latest, each tagged with its bare version. Published tags carry no `v` prefix.
+- **Recipe source URL**: points at the published tag naming, which has no prefix; the previous URL resolved to an archive GitHub does not serve.
+- **Readme**: documents installing the package attached to a release.
+
 ## [0.5.5] — 2026-09-08
 
 Make the tool installable elsewhere, and stop showing what git hides.
@@ -15,7 +29,7 @@ Make the tool installable elsewhere, and stop showing what git hides.
 
 ### Fixed
 
-- **Crate version drift**: the manifest and lock file had fallen behind the released iteration, so `code-seek --version` reported an older number than the tag.
+- **Crate version drift**: the manifest and lock file had fallen behind the released version, so `code-seek --version` reported an older number than the tag.
 
 ## [0.5.4] — 2026-09-08
 
@@ -28,7 +42,7 @@ Prepare the repository to be published.
 ### Changed
 
 - **Public branch**: `main` rebuilt as a sanitized tree with no agent or workflow paths anywhere in its history.
-- **Readme**: license section, Elixir listed among supported languages, release history linked instead of a private backlog.
+- **Readme**: license section, Elixir listed among supported languages, and a link to the release history in the status note.
 - **Architecture reference**: the Go parser added to the per-language module map.
 
 ## [0.5.3] — 2026-09-08
@@ -504,4 +518,4 @@ Release — closes the 0.1.x MVP cycle.
 - CLI skeleton with clap
 - code-seek init: creates .code-seek/ with default config.toml
 - File walker with hardcoded .git/ and .code-seek/ ignore
-- Initial documentation (SPECS, BACKLOG, AGENTS, README, CHANGELOG)
+- Initial documentation (SPECS, README, CHANGELOG)

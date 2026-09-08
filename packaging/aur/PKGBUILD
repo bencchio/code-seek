@@ -2,15 +2,18 @@
 # The build honors .cargo/config.toml, which redirects artifacts to src/target;
 # the integration tests look for the binary there, so the path is not overridden.
 pkgname=code-seek
-pkgver=0.5.5
+pkgver=0.6.0
 pkgrel=1
 pkgdesc="Explore the functional structure of a repository from the CLI"
 arch=('x86_64' 'aarch64')
 url="https://github.com/bencchio/code-seek"
 license=('MIT')
 depends=('gcc-libs')
+# The tree-sitter grammars compile C that ends up in a static archive; with makepkg's LTO on,
+# those objects become bitcode the linker then cannot resolve against the Rust build.
+options=(!lto)
 makedepends=('cargo')
-source=("${pkgname}-${pkgver}.tar.gz::${url}/archive/refs/tags/v${pkgver}.tar.gz")
+source=("${pkgname}-${pkgver}.tar.gz::${url}/archive/refs/tags/${pkgver}.tar.gz")
 # Replace with the real checksum once the release tarball is published.
 sha256sums=('SKIP')
 

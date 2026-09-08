@@ -1,6 +1,6 @@
 [package]
 name = "code-seek"
-version = "0.5.5"
+version = "0.6.0"
 edition = "2024"
 description = "Explore the functional structure of a repository from the CLI"
 license = "MIT"
