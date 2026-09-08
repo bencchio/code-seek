@@ -1,4 +1,5 @@
 target/
+src/target/
 .code-seek/
 .notes/
 docs/SPECS.md

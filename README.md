@@ -1,4 +1,4 @@
-# Codexa
+# Code Seek
 
 Explore the functional structure of a repository from the CLI.
 
@@ -11,53 +11,75 @@ Explore the functional structure of a repository from the CLI.
 
 ## Status
 
-MVP with CLI scaffold, `init` and `scan` commands, and file walker.
+**v0.2.0** — stable release. `code-seek scan` parses C, C++, Rust, and QML; counts
+effective LOC; renders a tree with 8 entity types (Class, Enum, Function, Impl, Method,
+Namespace, Struct, Trait); supports `--lang` filtering; enforces `follow_symlinks`
+(default: false) and `max_file_size_mb` (default: 10) from `.code-seek/config.toml`.
+
+## Installation
+
+**Requirements:** Rust toolchain (stable).
+
+```bash
+# Build release binary and install system-wide
+cargo build --release
+sudo cp target/release/code-seek /usr/local/bin/code-seek
+```
+
+Or install into `~/.cargo/bin` (must be on `PATH`):
+
+```bash
+cargo install --path .
+```
+
+Verify:
+
+```bash
+code-seek --version
+```
 
 ## Quick start
 
 ```bash
-# Initialize Codexa in the current directory
-codexa init
+# Initialize Code Seek in the current directory
+code-seek init
 
 # Analyze the codebase (v0.1.x)
-codexa scan .
+code-seek scan .
 ```
 
 From v0.2.x:
 
 ```bash
 # Save snapshot and view history
-codexa scan . --save
-codexa history list
-codexa history show <snapshot-id>
-codexa history diff <a> <b>
+code-seek scan . --save
+code-seek history list
+code-seek history show <snapshot-id>
+code-seek history diff <a> <b>
 
 # Configure
-codexa config set scan.follow_symlinks true
-codexa config list
+code-seek config set scan.follow_symlinks true
+code-seek config list
 
 # Ignore directories
-codexa ignore add "target/"
-codexa ignore list
+code-seek ignore add "target/"
+code-seek ignore list
 ```
 
 ## Sample output (v0.1.x)
 
 ```
-src/main.cpp  (120 LOC, C++)
-  Classes:
-    Parser
-      parse()      12 LOC  [5-16]
-      validate()    8 LOC  [18-25]
-  Functions:
-    main()         15 LOC  [28-42]
+󱘗 src/main.rs  [Rust]          38 LOC  3 entities
+├─ 󰠱 Cli                        4 LOC  [ 14- 17]
+├─ 󰒻 Command                   11 LOC  [ 20- 30]
+└─ 󰊕 main                      11 LOC  [ 32- 42]
 
-src/user.rs  (45 LOC, Rust)
-  Impl User:
-    create()       14 LOC  [3-16]
-    login()         7 LOC  [18-24]
-  Functions:
-    bootstrap()    18 LOC  [27-44]
+󱘗 src/model.rs  [Rust]         28 LOC  3 entities
+├─ 󰠱 Entity                     8 LOC  [ 16- 23]
+├─ 󰒻 EntityType                10 LOC  [  4- 13]
+└─ 󰠱 FileResult                 6 LOC  [ 26- 31]
+
+2 files  6 entities
 ```
 
 ## Documentation
