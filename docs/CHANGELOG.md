@@ -2,6 +2,60 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.5.5] — 2026-09-08
+
+Make the tool installable elsewhere, and stop showing what git hides.
+
+### Added
+
+- **Install script** (`install.sh`): builds the release binary and installs it to `~/.local/bin`, with `--prefix` to override, a clear failure when cargo is missing, and a PATH warning.
+- **AUR recipe** (`packaging/aur/PKGBUILD`): builds from the tagged release tarball and installs the binary, license, and readme.
+- **Crate packaging metadata** (`Cargo.toml`): `description`, `license`, `repository`, `readme`, `keywords`, `categories`.
+- **Git ignore rules honored** (`src/gitignore.rs`): inside a git repository, scan hides files and directories git would not show, asked once per scan via `git ls-files`. Ignored directories are pruned, not descended into. `--no-gitignore` on the CLI and `no_gitignore` on the MCP `scan` tool opt out. Outside a repository, or with git unavailable, nothing is filtered.
+
+### Fixed
+
+- **Crate version drift**: the manifest and lock file had fallen behind the released iteration, so `code-seek --version` reported an older number than the tag.
+
+## [0.5.4] — 2026-09-08
+
+Prepare the repository to be published.
+
+### Added
+
+- **MIT license** (`LICENSE`), referenced from the readme.
+
+### Changed
+
+- **Public branch**: `main` rebuilt as a sanitized tree with no agent or workflow paths anywhere in its history.
+- **Readme**: license section, Elixir listed among supported languages, release history linked instead of a private backlog.
+- **Architecture reference**: the Go parser added to the per-language module map.
+
+## [0.5.3] — 2026-09-08
+
+Parse Elixir and label language-specific entity kinds.
+
+### Added
+
+- **Elixir parser** (`src/lang/elixir.rs`): `.ex`/`.exs`, `--lang elixir`. Maps `defmodule` to Namespace, `def`/`defp`/`defmacro`/`defmacrop` to Function (Method inside protocol/impl), `defprotocol` to Trait, `defimpl` to Impl, `defstruct` to Struct.
+- **Entity `kind`** (`src/model.rs`): optional language-specific variant in JSON; omitted when empty. Elixir sets it to the defining keyword (`defp`, `defmodule`, …).
+
+## [0.5.2] — 2026-09-08
+
+Keep project state out of the repository.
+
+### Changed
+
+- **XDG state directory** (`src/state.rs`): config and cache live under `${XDG_STATE_HOME:-~/.local/state}/code-seek/<basename>/`. Colliding basenames get a short suffix. `init` and the first scan create the slot. An old in-repo `.code-seek/` folder is ignored.
+
+## [0.5.1] — 2026-09-07
+
+Rename project to Code Seek.
+
+### Changed
+
+- **Project rename** (`code-seek` → `code-seek`): crate, CLI binary, clap name, MCP `serverInfo`, docs, tests, and state directory `.code-seek/` (`config.toml`, `cache.json`). Walker always ignores `.code-seek/`.
+
 ## [0.5.0] — 2026-07-14
 
 Security audit, documentation, and roadmap 0.5.

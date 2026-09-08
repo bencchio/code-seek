@@ -83,6 +83,7 @@ Returns the entity structure of a directory or file as JSON. Same schema as `cod
 | `max_depth` | integer | no       | Hard depth ceiling: `0` = file headers only, `1` = root entities, `2` = roots + direct children |
 | `ignore`    | string  | no       | Comma-separated directory names to skip (e.g. `"target,node_modules"`) |
 | `info`      | string  | no       | Entity info filter: `"all"` (default), `"no-tests"` (exclude test modules), `"tests-only"` (show only test modules) |
+| `no_gitignore` | boolean | no    | Include files git is told to ignore. Default `false`: inside a git repository, ignored files and directories are hidden |
 
 See `docs/reference/SPECS.md` for the full JSON schema.
 
@@ -230,4 +231,4 @@ If you see no output, the binary is not found. If you see an error, check stderr
 
 ### `code-seek init` is not required for MCP
 
-`code-seek mcp` works without a `.code-seek/config.toml` file. The cache is silently skipped if the config is absent.
+`code-seek mcp` works without a prior `init`. The first scan creates the XDG state slot and cache.

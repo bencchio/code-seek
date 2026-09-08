@@ -1,24 +1,47 @@
 use tree_sitter::Node;
 
-use super::{Context, LocMap, body_children, classify_path, container_entity, leaf_entity, name_field};
+use super::{
+    Context, LocMap, body_children, classify_path, container_entity, leaf_entity, name_field,
+};
 use crate::model::{Dependency, DependencyKind, Entity, EntityType};
 
-pub(super) fn parse_node(node: Node<'_>, source: &str, loc_map: &LocMap, context: Context, depth: usize) -> Option<Entity> {
+pub(super) fn parse_node(
+    node: Node<'_>,
+    source: &str,
+    loc_map: &LocMap,
+    context: Context,
+    depth: usize,
+) -> Option<Entity> {
     let src = source.as_bytes();
     match node.kind() {
         "function_definition" | "async_function_definition" => {
-            let entity_type = if context == Context::TypeBody { EntityType::Method } else { EntityType::Function };
-            Some(leaf_entity(node, name_field(node, src)?, entity_type, loc_map))
+            let entity_type = if context == Context::TypeBody {
+                EntityType::Method
+            } else {
+                EntityType::Function
+            };
+            Some(leaf_entity(
+                node,
+                name_field(node, src)?,
+                entity_type,
+                loc_map,
+            ))
         }
         "class_definition" => {
             let name = name_field(node, src)?;
-            let children = body_children(node, source, loc_map, Context::TypeBody, depth, parse_node);
-            Some(container_entity(node, name, EntityType::Class, loc_map, children))
+            let children =
+                body_children(node, source, loc_map, Context::TypeBody, depth, parse_node);
+            Some(container_entity(
+                node,
+                name,
+                EntityType::Class,
+                loc_map,
+                children,
+            ))
         }
-        "decorated_definition" => {
-            node.child_by_field_name("definition")
-                .and_then(|def| parse_node(def, source, loc_map, context, depth))
-        }
+        "decorated_definition" => node
+            .child_by_field_name("definition")
+            .and_then(|def| parse_node(def, source, loc_map, context, depth)),
         _ => None,
     }
 }
@@ -36,7 +59,12 @@ pub(super) fn resolve_imports(
 fn parse_import(raw: &str) -> Vec<Dependency> {
     if let Some(rest) = raw.strip_prefix("from ") {
         // "from MODULE import ..." — module is everything before " import "
-        let module = rest.split(" import ").next().unwrap_or("").trim().to_owned();
+        let module = rest
+            .split(" import ")
+            .next()
+            .unwrap_or("")
+            .trim()
+            .to_owned();
         if module.is_empty() {
             return vec![];
         }
@@ -46,7 +74,14 @@ fn parse_import(raw: &str) -> Vec<Dependency> {
         rest.split(',')
             .filter_map(|segment| {
                 let name = segment.split(" as ").next().unwrap_or("").trim().to_owned();
-                if name.is_empty() { None } else { Some(Dependency { name, kind: DependencyKind::External }) }
+                if name.is_empty() {
+                    None
+                } else {
+                    Some(Dependency {
+                        name,
+                        kind: DependencyKind::External,
+                    })
+                }
             })
             .collect()
     } else {
@@ -58,8 +93,12 @@ fn parse_import(raw: &str) -> Vec<Dependency> {
 mod tests {
     use super::*;
 
-    fn parse(src: &str) -> Vec<Entity> { crate::lang::test_parse("Python", src).entities }
-    fn imports(src: &str) -> Vec<String> { crate::lang::test_parse("Python", src).imports }
+    fn parse(src: &str) -> Vec<Entity> {
+        crate::lang::test_parse("Python", src).entities
+    }
+    fn imports(src: &str) -> Vec<String> {
+        crate::lang::test_parse("Python", src).imports
+    }
 
     #[test]
     fn parses_function_def() {
@@ -85,7 +124,12 @@ mod tests {
         assert_eq!(entities[0].name, "Animal");
         assert_eq!(entities[0].entity_type, EntityType::Class);
         assert_eq!(entities[0].children.len(), 2);
-        assert!(entities[0].children.iter().all(|c| c.entity_type == EntityType::Method));
+        assert!(
+            entities[0]
+                .children
+                .iter()
+                .all(|c| c.entity_type == EntityType::Method)
+        );
         assert!(entities[0].children.iter().any(|c| c.name == "__init__"));
         assert!(entities[0].children.iter().any(|c| c.name == "speak"));
     }

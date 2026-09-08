@@ -4,18 +4,16 @@ Explore the functional structure of a repository from the CLI.
 
 - **Structural tree**: classes, methods, functions, structs, traits, enums,
   components, with LOC and line numbers.
-- **Multi-language**: C, C++, Go, JavaScript, Python, Rust, TypeScript, QML.
+- **Multi-language**: C, C++, Elixir, Go, JavaScript, Python, Rust, TypeScript, QML.
 - **Error-tolerant**: partially parses even with invalid code.
+- **Honors `.gitignore`**: inside a git repository, ignored files never reach the output.
 
 ## Status
 
-**v0.5.0** — Security audit & documentation. Path traversal protection
-in MCP, cache symlink attack prevention, TOCTOU fixes, proper JSON-RPC
-error responses, and `main() -> Result`. Roadmap restructured into 0.5.x
-(CLI) and 0.6.x (agent tools) cycles.
+**v0.5.5** — installable anywhere: install script, AUR recipe, and scan that honors `.gitignore`.
 
 See [`docs/rules/mcp.md`](docs/rules/mcp.md) for MCP setup and
-the project backlog for the plan.
+[`docs/CHANGELOG.md`](docs/CHANGELOG.md) for release history.
 
 ## Installation
 
@@ -26,27 +24,38 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 # Then restart your shell or run: source ~/.cargo/env
 ```
 
-**Option A — install system-wide:**
+**Option A — the install script:**
 
 ```bash
-cargo build --release
-sudo cp target/release/code-seek /usr/local/bin/code-seek
+git clone https://github.com/bencchio/code-seek
+cd code-seek
+./install.sh
 ```
 
-**Option B — install to `~/.cargo/bin`:**
+It builds the release binary and installs it to `~/.local/bin`. Pass
+`--prefix <dir>` to install somewhere else, for example
+`sudo ./install.sh --prefix /usr/local/bin`. The script tells you if the
+prefix is not on your `PATH`.
+
+**Option B — cargo:**
 
 ```bash
 cargo install --path .
 ```
 
-`~/.cargo/bin` must be on your `PATH`. If `code-seek --version` fails after install, add it:
+This installs to `~/.cargo/bin`, which must be on your `PATH`. If
+`code-seek --version` fails afterwards, add it:
 
 ```bash
 echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> ~/.bashrc  # or ~/.zshrc
 source ~/.bashrc
 ```
 
-Verify:
+**Option C — Arch Linux:**
+
+The AUR recipe lives in [`packaging/aur/PKGBUILD`](packaging/aur/PKGBUILD).
+
+Verify any of them with:
 
 ```bash
 code-seek --version
@@ -82,6 +91,7 @@ Use `code-seek scan <path>` to explore the structure of any file or directory be
 - Limit tree depth: `code-seek scan . --max-depth 1`
 - Exclude test modules: `code-seek scan . --info no-tests`
 - Only test modules: `code-seek scan . --info tests-only`
+- Include files git ignores: `code-seek scan . --no-gitignore`
 
 Prefer `--max-depth 1` for a fast first pass on large directories.
 ```
@@ -117,4 +127,8 @@ See [`docs/rules/mcp.md`](docs/rules/mcp.md) for setup instructions (Claude Code
 
 ## Supported languages
 
-C · C++ · Go · JavaScript · Python · Rust · TypeScript · QML
+C · C++ · Elixir · Go · JavaScript · Python · Rust · TypeScript · QML
+
+## License
+
+MIT — see [`LICENSE`](LICENSE).

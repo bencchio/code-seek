@@ -3,7 +3,13 @@ use tree_sitter::Node;
 use super::{Context, LocMap, container_entity, leaf_entity, name_field};
 use crate::model::{Dependency, DependencyKind, Entity, EntityType};
 
-pub(super) fn parse_node(node: Node<'_>, source: &str, loc_map: &LocMap, _context: Context, _depth: usize) -> Option<Entity> {
+pub(super) fn parse_node(
+    node: Node<'_>,
+    source: &str,
+    loc_map: &LocMap,
+    _context: Context,
+    _depth: usize,
+) -> Option<Entity> {
     if node.kind() == "ui_object_definition" {
         parse_object(node, source, loc_map)
     } else {
@@ -40,7 +46,13 @@ fn parse_object(node: Node<'_>, source: &str, loc_map: &LocMap) -> Option<Entity
     methods.sort_by(|a, b| a.name.cmp(&b.name));
 
     let name = id_name.unwrap_or(type_name);
-    Some(container_entity(node, name, EntityType::Class, loc_map, methods))
+    Some(container_entity(
+        node,
+        name,
+        EntityType::Class,
+        loc_map,
+        methods,
+    ))
 }
 
 fn extract_id(binding: &Node<'_>, src: &[u8]) -> Option<String> {
@@ -67,10 +79,16 @@ pub(super) fn resolve_imports(
             let raw = raw.trim().strip_prefix("import ")?.trim();
             if let Some(quoted) = raw.split('"').nth(1) {
                 let name = quoted.to_owned();
-                return Some(Dependency { name, kind: DependencyKind::Internal });
+                return Some(Dependency {
+                    name,
+                    kind: DependencyKind::Internal,
+                });
             }
             let name = raw.split_whitespace().next()?.to_owned();
-            Some(Dependency { name, kind: DependencyKind::External })
+            Some(Dependency {
+                name,
+                kind: DependencyKind::External,
+            })
         })
         .collect()
 }
@@ -80,8 +98,12 @@ mod tests {
     use super::*;
     use crate::model::EntityType;
 
-    fn entities(s: &str) -> Vec<Entity> { crate::lang::test_parse("QML", s).entities }
-    fn imports(s: &str) -> Vec<String> { crate::lang::test_parse("QML", s).imports }
+    fn entities(s: &str) -> Vec<Entity> {
+        crate::lang::test_parse("QML", s).entities
+    }
+    fn imports(s: &str) -> Vec<String> {
+        crate::lang::test_parse("QML", s).imports
+    }
 
     #[test]
     fn parses_object_with_id() {
@@ -106,7 +128,12 @@ mod tests {
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].name, "root");
         assert_eq!(result[0].children.len(), 2);
-        assert!(result[0].children.iter().all(|c| c.entity_type == EntityType::Method));
+        assert!(
+            result[0]
+                .children
+                .iter()
+                .all(|c| c.entity_type == EntityType::Method)
+        );
     }
 
     #[test]

@@ -10,9 +10,18 @@ use tree_sitter::Node;
 use super::{Context, LocMap, ParseNode, declarator_name, leaf_entity};
 use crate::model::{Dependency, DependencyKind, Entity, EntityType};
 
-pub(super) fn function_entity(node: Node<'_>, source: &str, loc_map: &LocMap, context: Context) -> Option<Entity> {
+pub(super) fn function_entity(
+    node: Node<'_>,
+    source: &str,
+    loc_map: &LocMap,
+    context: Context,
+) -> Option<Entity> {
     let name = declarator_name(node.child_by_field_name("declarator")?, source.as_bytes())?;
-    let entity_type = if context == Context::TypeBody { EntityType::Method } else { EntityType::Function };
+    let entity_type = if context == Context::TypeBody {
+        EntityType::Method
+    } else {
+        EntityType::Function
+    };
     Some(leaf_entity(node, name, entity_type, loc_map))
 }
 

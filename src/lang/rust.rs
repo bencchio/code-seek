@@ -2,34 +2,88 @@ use std::path::Path;
 
 use tree_sitter::Node;
 
-use super::{Context, LocMap, body_children, collect_children, container_entity, leaf_entity, name_field};
+use super::{
+    Context, LocMap, body_children, collect_children, container_entity, leaf_entity, name_field,
+};
 use crate::model::{Dependency, DependencyKind, Entity, EntityType};
 
-pub(super) fn parse_node(node: Node<'_>, source: &str, loc_map: &LocMap, context: Context, depth: usize) -> Option<Entity> {
+pub(super) fn parse_node(
+    node: Node<'_>,
+    source: &str,
+    loc_map: &LocMap,
+    context: Context,
+    depth: usize,
+) -> Option<Entity> {
     let src = source.as_bytes();
     match node.kind() {
         "function_item" | "function_signature_item" => {
-            let entity_type = if context == Context::TypeBody { EntityType::Method } else { EntityType::Function };
-            Some(leaf_entity(node, name_field(node, src)?, entity_type, loc_map))
+            let entity_type = if context == Context::TypeBody {
+                EntityType::Method
+            } else {
+                EntityType::Function
+            };
+            Some(leaf_entity(
+                node,
+                name_field(node, src)?,
+                entity_type,
+                loc_map,
+            ))
         }
-        "struct_item" => Some(leaf_entity(node, name_field(node, src)?, EntityType::Struct, loc_map)),
-        "enum_item" => Some(leaf_entity(node, name_field(node, src)?, EntityType::Enum, loc_map)),
+        "struct_item" => Some(leaf_entity(
+            node,
+            name_field(node, src)?,
+            EntityType::Struct,
+            loc_map,
+        )),
+        "enum_item" => Some(leaf_entity(
+            node,
+            name_field(node, src)?,
+            EntityType::Enum,
+            loc_map,
+        )),
         "impl_item" => {
             let name = impl_target_type(node, src)?;
-            let children = body_children(node, source, loc_map, Context::TypeBody, depth, parse_node);
-            Some(container_entity(node, name, EntityType::Impl, loc_map, children))
+            let children =
+                body_children(node, source, loc_map, Context::TypeBody, depth, parse_node);
+            Some(container_entity(
+                node,
+                name,
+                EntityType::Impl,
+                loc_map,
+                children,
+            ))
         }
         "trait_item" => {
             let name = name_field(node, src)?;
-            let children = body_children(node, source, loc_map, Context::TypeBody, depth, parse_node);
-            Some(container_entity(node, name, EntityType::Trait, loc_map, children))
+            let children =
+                body_children(node, source, loc_map, Context::TypeBody, depth, parse_node);
+            Some(container_entity(
+                node,
+                name,
+                EntityType::Trait,
+                loc_map,
+                children,
+            ))
         }
         "mod_item" => {
             // `mod foo;` has no body and declares nothing to show here
             let body = node.child_by_field_name("body")?;
             let name = name_field(node, src)?;
-            let children = collect_children(body, source, loc_map, Context::TopLevel, depth + 1, parse_node);
-            Some(container_entity(node, name, EntityType::Namespace, loc_map, children))
+            let children = collect_children(
+                body,
+                source,
+                loc_map,
+                Context::TopLevel,
+                depth + 1,
+                parse_node,
+            );
+            Some(container_entity(
+                node,
+                name,
+                EntityType::Namespace,
+                loc_map,
+                children,
+            ))
         }
         _ => None,
     }
@@ -73,7 +127,10 @@ pub(super) fn resolve_imports(
                 } else if raw.starts_with("use ") || raw.starts_with("extern crate ") {
                     let candidate_rs = Path::new("src").join(format!("{crate_name}.rs"));
                     let candidate_mod = Path::new("src").join(&crate_name).join("mod.rs");
-                    if project_files.iter().any(|p| p.ends_with(&candidate_rs) || p.ends_with(&candidate_mod)) {
+                    if project_files
+                        .iter()
+                        .any(|p| p.ends_with(&candidate_rs) || p.ends_with(&candidate_mod))
+                    {
                         DependencyKind::Internal
                     } else {
                         DependencyKind::External
@@ -81,7 +138,10 @@ pub(super) fn resolve_imports(
                 } else {
                     DependencyKind::External
                 };
-                Some(Dependency { name: crate_name, kind })
+                Some(Dependency {
+                    name: crate_name,
+                    kind,
+                })
             } else {
                 None
             }
@@ -112,8 +172,12 @@ mod tests {
     use super::*;
     use crate::model::EntityType;
 
-    fn parse(src: &str) -> Vec<Entity> { crate::lang::test_parse("Rust", src).entities }
-    fn imports(src: &str) -> Vec<String> { crate::lang::test_parse("Rust", src).imports }
+    fn parse(src: &str) -> Vec<Entity> {
+        crate::lang::test_parse("Rust", src).entities
+    }
+    fn imports(src: &str) -> Vec<String> {
+        crate::lang::test_parse("Rust", src).imports
+    }
 
     #[test]
     fn parses_function() {

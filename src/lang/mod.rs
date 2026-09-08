@@ -8,11 +8,12 @@ use crate::model::{Dependency, DependencyKind, Entity, EntityType, FileResult, S
 pub(crate) mod c;
 mod c_family;
 pub(crate) mod cpp;
+pub(crate) mod elixir;
+pub(crate) mod go;
 pub(crate) mod js;
 mod loc;
 pub(crate) mod python;
 pub(crate) mod qml;
-pub(crate) mod go;
 pub(crate) mod rust;
 pub(crate) mod ts;
 
@@ -68,6 +69,16 @@ pub(crate) static LANGUAGES: &[LangDef] = &[
         import_kinds: &["preproc_include"],
         parse_node: cpp::parse_node,
         resolve_imports: c_family::resolve_includes,
+    },
+    LangDef {
+        canonical: "Elixir",
+        aliases: &["elixir", "ex"],
+        extensions: &["ex", "exs"],
+        icon: "",
+        grammar: || tree_sitter_elixir::LANGUAGE.into(),
+        import_kinds: &[],
+        parse_node: elixir::parse_node,
+        resolve_imports: elixir::resolve_imports,
     },
     LangDef {
         canonical: "JavaScript",
@@ -176,10 +187,21 @@ fn run_parser(def: &LangDef, source: &str, loc_map: &LocMap) -> ParseOutput {
     let Some(tree) = parse_source((def.grammar)(), source) else {
         return ParseOutput::default();
     };
-    let entities = collect_children(tree.root_node(), source, loc_map, Context::TopLevel, 0, def.parse_node);
+    let entities = collect_children(
+        tree.root_node(),
+        source,
+        loc_map,
+        Context::TopLevel,
+        0,
+        def.parse_node,
+    );
     let imports = extract_imports_from_tree(&tree, source, def.import_kinds);
     let errors = detect_syntax_errors(&tree);
-    ParseOutput { entities, imports, errors }
+    ParseOutput {
+        entities,
+        imports,
+        errors,
+    }
 }
 
 #[cfg(test)]
@@ -188,7 +210,10 @@ pub(super) fn test_parse(canonical: &str, source: &str) -> ParseOutput {
     run_parser(def, source, &LocMap::build(source))
 }
 
-pub(super) fn parse_source(language: tree_sitter::Language, source: &str) -> Option<tree_sitter::Tree> {
+pub(super) fn parse_source(
+    language: tree_sitter::Language,
+    source: &str,
+) -> Option<tree_sitter::Tree> {
     let mut parser = Parser::new();
     parser.set_language(&language).ok()?;
     parser.parse(source.as_bytes(), None)
@@ -248,9 +273,20 @@ pub(super) fn name_field(node: Node<'_>, src: &[u8]) -> Option<String> {
         .map(str::to_owned)
 }
 
-pub(super) fn leaf_entity(node: Node<'_>, name: String, entity_type: EntityType, loc_map: &LocMap) -> Entity {
+pub(super) fn leaf_entity(
+    node: Node<'_>,
+    name: String,
+    entity_type: EntityType,
+    loc_map: &LocMap,
+) -> Entity {
     let (start_line, end_line) = node_lines(node);
-    Entity::new(name, entity_type, loc_map.count(start_line, end_line), start_line, end_line)
+    Entity::new(
+        name,
+        entity_type,
+        loc_map.count(start_line, end_line),
+        start_line,
+        end_line,
+    )
 }
 
 pub(super) fn container_entity(
@@ -264,6 +300,7 @@ pub(super) fn container_entity(
     Entity {
         name,
         entity_type,
+        kind: String::new(),
         loc: loc_map.count(start_line, end_line),
         start_line,
         end_line,
@@ -364,6 +401,12 @@ mod tests {
     }
 
     #[test]
+    fn detect_elixir() {
+        assert_eq!(detect(Path::new("foo.ex")), Some("Elixir"));
+        assert_eq!(detect(Path::new("foo.exs")), Some("Elixir"));
+    }
+
+    #[test]
     fn detect_empty_extension() {
         assert_eq!(detect(Path::new("foo.")), None);
     }
@@ -374,7 +417,10 @@ mod tests {
         let tree = parse_source(tree_sitter_rust::LANGUAGE.into(), src).unwrap();
         let errors = detect_syntax_errors(&tree);
         assert!(!errors.is_empty());
-        let e = errors.iter().find(|e| e.kind == "error").expect("should have error kind");
+        let e = errors
+            .iter()
+            .find(|e| e.kind == "error")
+            .expect("should have error kind");
         assert_eq!(e.node_kind, "ERROR");
         assert_eq!(e.start_line, 1);
         assert_eq!(e.end_line, 1);
@@ -398,7 +444,10 @@ mod tests {
         let tree = parse_source(tree_sitter_c::LANGUAGE.into(), src).unwrap();
         let errors = detect_syntax_errors(&tree);
         assert!(!errors.is_empty());
-        let e = errors.iter().find(|e| e.kind == "missing").expect("should have missing kind");
+        let e = errors
+            .iter()
+            .find(|e| e.kind == "missing")
+            .expect("should have missing kind");
         assert_eq!(e.start_line, 1);
         assert!(!e.node_kind.is_empty());
     }
@@ -442,8 +491,16 @@ mod tests {
     fn every_language_runs_through_the_generic_driver() {
         for def in LANGUAGES {
             let out = run_parser(def, "", &LocMap::build(""));
-            assert!(out.entities.is_empty(), "{}: empty source yields no entities", def.canonical);
-            assert!(out.imports.is_empty(), "{}: empty source yields no imports", def.canonical);
+            assert!(
+                out.entities.is_empty(),
+                "{}: empty source yields no entities",
+                def.canonical
+            );
+            assert!(
+                out.imports.is_empty(),
+                "{}: empty source yields no imports",
+                def.canonical
+            );
         }
     }
 }

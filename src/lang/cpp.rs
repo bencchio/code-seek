@@ -3,7 +3,13 @@ use tree_sitter::Node;
 use super::{Context, LocMap, body_children, c_family, container_entity, leaf_entity, name_field};
 use crate::model::{Entity, EntityType};
 
-pub(super) fn parse_node(node: Node<'_>, source: &str, loc_map: &LocMap, context: Context, depth: usize) -> Option<Entity> {
+pub(super) fn parse_node(
+    node: Node<'_>,
+    source: &str,
+    loc_map: &LocMap,
+    context: Context,
+    depth: usize,
+) -> Option<Entity> {
     let src = source.as_bytes();
     match node.kind() {
         "function_definition" => c_family::function_entity(node, source, loc_map, context),
@@ -14,14 +20,27 @@ pub(super) fn parse_node(node: Node<'_>, source: &str, loc_map: &LocMap, context
             } else {
                 EntityType::Struct
             };
-            let children = body_children(node, source, loc_map, Context::TypeBody, depth, parse_node);
+            let children =
+                body_children(node, source, loc_map, Context::TypeBody, depth, parse_node);
             Some(container_entity(node, name, entity_type, loc_map, children))
         }
-        "enum_specifier" => Some(leaf_entity(node, name_field(node, src)?, EntityType::Enum, loc_map)),
+        "enum_specifier" => Some(leaf_entity(
+            node,
+            name_field(node, src)?,
+            EntityType::Enum,
+            loc_map,
+        )),
         "namespace_definition" => {
             let name = name_field(node, src).unwrap_or_else(|| "<anonymous>".to_string());
-            let children = body_children(node, source, loc_map, Context::TopLevel, depth, parse_node);
-            Some(container_entity(node, name, EntityType::Namespace, loc_map, children))
+            let children =
+                body_children(node, source, loc_map, Context::TopLevel, depth, parse_node);
+            Some(container_entity(
+                node,
+                name,
+                EntityType::Namespace,
+                loc_map,
+                children,
+            ))
         }
         "declaration" | "type_definition" => c_family::unwrap_declaration(
             node,
@@ -41,8 +60,12 @@ mod tests {
     use super::*;
     use crate::model::{DependencyKind, EntityType};
 
-    fn parse(src: &str) -> Vec<Entity> { crate::lang::test_parse("C++", src).entities }
-    fn imports(src: &str) -> Vec<String> { crate::lang::test_parse("C++", src).imports }
+    fn parse(src: &str) -> Vec<Entity> {
+        crate::lang::test_parse("C++", src).entities
+    }
+    fn imports(src: &str) -> Vec<String> {
+        crate::lang::test_parse("C++", src).imports
+    }
 
     #[test]
     fn parses_class_with_methods() {

@@ -42,23 +42,26 @@ Language registry (`LANGUAGES` static array) and the generic parse pipeline. Eac
 - `classify_path()` — relative-vs-package import classification
 - `Context` (`TopLevel`/`TypeBody`), `ParseOutput` — walk context and pipeline result types
 
-### `src/lang/c.rs`, `cpp.rs`, `js.rs`, `python.rs`, `qml.rs`, `rust.rs`, `ts.rs`
+### `src/lang/c.rs`, `cpp.rs`, `elixir.rs`, `go.rs`, `js.rs`, `python.rs`, `qml.rs`, `rust.rs`, `ts.rs`
 Per-language parsers. Each implements `parse_node(node, source, loc_map, context, depth) -> Option<Entity>` mapping tree-sitter nodes to the canonical entity model — no language-specific output structures. Family bases hold shared handling: `c_family.rs` for C/C++ (`#include` resolution, function/declaration handling) and `js::parse_common` for JS/TS.
 
 ### `src/mcp.rs`
 JSON-RPC 2.0 MCP server over stdio. Implements `initialize`, `tools/list`, and `tools/call` with 4 tools: `scan`, `entity`, `summary`, `locate`. Negotiates protocol version with the client. Logs all requests to stderr via `crate::log`.
 
+### `src/state.rs`
+Resolves `${XDG_STATE_HOME:-~/.local/state}/code-seek/<basename>/` for the current directory, disambiguating colliding basenames.
+
 ### `src/walker.rs`
-Recursive file walker. Respects `ignore_dirs`, `follow_symlinks`, and `max_file_size_mb` from config. Always ignores `.git/` and `.code-seek/`. Returns only supported file extensions.
+Recursive file walker. Respects `ignore_dirs`, `follow_symlinks`, and `max_file_size_mb` from config. Always ignores `.git/` and leftover `.code-seek/`. Returns only supported file extensions.
 
 ### `src/config.rs`
-Loads `.code-seek/config.toml`. Provides defaults for all fields when file is absent.
+Loads `config.toml` from the XDG slot. Provides defaults for all fields when file is absent.
 
 ### `src/init.rs`
-Implements `code-seek init` — creates `.code-seek/` directory with default `config.toml` and pre-filled `ignore_dirs`.
+Implements `code-seek init` — writes default `config.toml` into the XDG slot with pre-filled `ignore_dirs`.
 
 ### `src/cache.rs`
-SHA-256 incremental scan cache. Stores per-file hash, language, LOC, and entities in `.code-seek/cache.json`. On subsequent scans, files with matching hashes are loaded from cache instead of re-parsed.
+SHA-256 incremental scan cache. Stores per-file hash, language, LOC, and entities in the slot's `cache.json`. On subsequent scans, files with matching hashes are loaded from cache instead of re-parsed.
 
 ### `src/log.rs`
 Structured stderr logging with `info`, `warn`, and `error` functions. Output is prefixed with `[INFO]`, `[WARN]`, or `[ERROR]`.
@@ -76,6 +79,6 @@ Structured stderr logging with `info`, `warn`, and `error` functions. Output is 
 
 - MCP support is mandatory — every feature added to the CLI should also be accessible via MCP
 - Deterministic output is mandatory — alphabetical sorting prevents false positives in diffs
-- Cache is optional and silent — missing `.code-seek/` directory never produces errors
+- Cache is optional and silent — if the XDG slot cannot be resolved, scan continues without cache
 - `pub(crate)` visibility — binary crate with no external API surface
 - Per-language modules share helpers via `lang/mod.rs` — adding a language requires one registry entry and one parser module

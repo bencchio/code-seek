@@ -1,9 +1,18 @@
 use tree_sitter::Node;
 
-use super::{Context, LocMap, ParseNode, body_children, classify_path, container_entity, leaf_entity, name_field};
+use super::{
+    Context, LocMap, ParseNode, body_children, classify_path, container_entity, leaf_entity,
+    name_field,
+};
 use crate::model::{Dependency, Entity, EntityType};
 
-pub(super) fn parse_node(node: Node<'_>, source: &str, loc_map: &LocMap, context: Context, depth: usize) -> Option<Entity> {
+pub(super) fn parse_node(
+    node: Node<'_>,
+    source: &str,
+    loc_map: &LocMap,
+    context: Context,
+    depth: usize,
+) -> Option<Entity> {
     parse_common(node, source, loc_map, context, depth, parse_node)
 }
 
@@ -20,24 +29,35 @@ pub(super) fn parse_common(
 ) -> Option<Entity> {
     let src = source.as_bytes();
     match node.kind() {
-        "function_declaration" => {
-            Some(leaf_entity(node, name_field(node, src)?, EntityType::Function, loc_map))
-        }
+        "function_declaration" => Some(leaf_entity(
+            node,
+            name_field(node, src)?,
+            EntityType::Function,
+            loc_map,
+        )),
         "class_declaration" => {
             let name = name_field(node, src)?;
             let children = body_children(node, source, loc_map, Context::TypeBody, depth, recurse);
-            Some(container_entity(node, name, EntityType::Class, loc_map, children))
+            Some(container_entity(
+                node,
+                name,
+                EntityType::Class,
+                loc_map,
+                children,
+            ))
         }
-        "method_definition" if context == Context::TypeBody => {
-            Some(leaf_entity(node, name_field(node, src)?, EntityType::Method, loc_map))
-        }
+        "method_definition" if context == Context::TypeBody => Some(leaf_entity(
+            node,
+            name_field(node, src)?,
+            EntityType::Method,
+            loc_map,
+        )),
         "lexical_declaration" | "variable_declaration" if context == Context::TopLevel => {
             arrow_from_declarator(node, src, loc_map)
         }
-        "export_statement" => {
-            node.child_by_field_name("declaration")
-                .and_then(|decl| recurse(decl, source, loc_map, context, depth))
-        }
+        "export_statement" => node
+            .child_by_field_name("declaration")
+            .and_then(|decl| recurse(decl, source, loc_map, context, depth)),
         _ => None,
     }
 }
@@ -92,8 +112,12 @@ mod tests {
     use super::*;
     use crate::model::DependencyKind;
 
-    fn parse(src: &str) -> Vec<Entity> { crate::lang::test_parse("JavaScript", src).entities }
-    fn imports(src: &str) -> Vec<String> { crate::lang::test_parse("JavaScript", src).imports }
+    fn parse(src: &str) -> Vec<Entity> {
+        crate::lang::test_parse("JavaScript", src).entities
+    }
+    fn imports(src: &str) -> Vec<String> {
+        crate::lang::test_parse("JavaScript", src).imports
+    }
 
     #[test]
     fn parses_function_declaration() {
@@ -111,7 +135,12 @@ mod tests {
         assert_eq!(entities[0].name, "Animal");
         assert_eq!(entities[0].entity_type, EntityType::Class);
         assert_eq!(entities[0].children.len(), 2);
-        assert!(entities[0].children.iter().all(|c| c.entity_type == EntityType::Method));
+        assert!(
+            entities[0]
+                .children
+                .iter()
+                .all(|c| c.entity_type == EntityType::Method)
+        );
         assert!(entities[0].children.iter().any(|c| c.name == "constructor"));
         assert!(entities[0].children.iter().any(|c| c.name == "speak"));
     }
@@ -182,8 +211,20 @@ mod tests {
         let src = "function alpha() {}\nconst beta = () => {}\nclass Gamma {}\n";
         let entities = parse(src);
         assert_eq!(entities.len(), 3);
-        assert!(entities.iter().any(|e| e.name == "alpha" && e.entity_type == EntityType::Function));
-        assert!(entities.iter().any(|e| e.name == "beta" && e.entity_type == EntityType::Function));
-        assert!(entities.iter().any(|e| e.name == "Gamma" && e.entity_type == EntityType::Class));
+        assert!(
+            entities
+                .iter()
+                .any(|e| e.name == "alpha" && e.entity_type == EntityType::Function)
+        );
+        assert!(
+            entities
+                .iter()
+                .any(|e| e.name == "beta" && e.entity_type == EntityType::Function)
+        );
+        assert!(
+            entities
+                .iter()
+                .any(|e| e.name == "Gamma" && e.entity_type == EntityType::Class)
+        );
     }
 }

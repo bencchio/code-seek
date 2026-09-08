@@ -36,6 +36,8 @@ pub(crate) enum EntityType {
 pub(crate) struct Entity {
     pub(crate) name: String,
     pub(crate) entity_type: EntityType,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub(crate) kind: String,
     pub(crate) loc: usize,
     pub(crate) start_line: usize,
     pub(crate) end_line: usize,
@@ -50,7 +52,15 @@ impl Entity {
         start_line: usize,
         end_line: usize,
     ) -> Self {
-        Self { name, entity_type, loc, start_line, end_line, children: Vec::new() }
+        Self {
+            name,
+            entity_type,
+            kind: String::new(),
+            loc,
+            start_line,
+            end_line,
+            children: Vec::new(),
+        }
     }
 }
 

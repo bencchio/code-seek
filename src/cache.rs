@@ -4,7 +4,10 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::{collections::HashMap, path::{Path, PathBuf}};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+};
 
 #[derive(Serialize, Deserialize)]
 struct CachedEntry {
@@ -32,10 +35,14 @@ fn resolve_cache_path(path: &Path) -> Option<PathBuf> {
     if let Ok(meta) = path.symlink_metadata() {
         if meta.file_type().is_symlink() {
             if let Ok(target) = path.canonicalize() {
-                if let Ok(cwd) = std::env::current_dir().and_then(|p| p.canonicalize()) {
-                    if !target.starts_with(&cwd) {
-                        crate::log::warn("cache symlink points outside the project directory; skipping cache");
-                        return None;
+                if let Some(parent) = path.parent() {
+                    if let Ok(root) = parent.canonicalize() {
+                        if !target.starts_with(&root) {
+                            crate::log::warn(
+                                "cache symlink points outside the state slot; skipping cache",
+                            );
+                            return None;
+                        }
                     }
                 }
                 return Some(target);
@@ -45,20 +52,34 @@ fn resolve_cache_path(path: &Path) -> Option<PathBuf> {
     Some(path.to_path_buf())
 }
 
+pub(crate) fn empty() -> Cache {
+    Cache {
+        entries: HashMap::new(),
+    }
+}
+
 pub(crate) fn load(path: &Path) -> Cache {
     let Some(resolved) = resolve_cache_path(path) else {
-        return Cache { entries: HashMap::new() };
+        return Cache {
+            entries: HashMap::new(),
+        };
     };
     let content = match std::fs::read_to_string(&resolved) {
         Ok(s) => s,
-        Err(_) => return Cache { entries: HashMap::new() },
+        Err(_) => {
+            return Cache {
+                entries: HashMap::new(),
+            };
+        }
     };
     if content.len() as u64 > MAX_CACHE_SIZE {
         crate::log::warn(&format!(
             "cache file is too large ({} MB), starting fresh",
             content.len() / (1024 * 1024)
         ));
-        return Cache { entries: HashMap::new() };
+        return Cache {
+            entries: HashMap::new(),
+        };
     }
     let entries: HashMap<String, CachedEntry> = match serde_json::from_str(&content) {
         Ok(e) => e,
@@ -144,21 +165,35 @@ mod tests {
 
     #[test]
     fn cache_miss_returns_none() {
-        let cache = Cache { entries: HashMap::new() };
+        let cache = Cache {
+            entries: HashMap::new(),
+        };
         assert!(cache.get("src/lib.rs", "abc123").is_none());
     }
 
     #[test]
     fn cache_hash_mismatch_returns_none() {
-        let mut cache = Cache { entries: HashMap::new() };
-        cache.insert("src/lib.rs".to_owned(), &make_file_result(), "correct_hash".to_owned());
+        let mut cache = Cache {
+            entries: HashMap::new(),
+        };
+        cache.insert(
+            "src/lib.rs".to_owned(),
+            &make_file_result(),
+            "correct_hash".to_owned(),
+        );
         assert!(cache.get("src/lib.rs", "wrong_hash").is_none());
     }
 
     #[test]
     fn cache_hit_returns_file_result() {
-        let mut cache = Cache { entries: HashMap::new() };
-        cache.insert("src/lib.rs".to_owned(), &make_file_result(), "hash1".to_owned());
+        let mut cache = Cache {
+            entries: HashMap::new(),
+        };
+        cache.insert(
+            "src/lib.rs".to_owned(),
+            &make_file_result(),
+            "hash1".to_owned(),
+        );
         let got = cache.get("src/lib.rs", "hash1").unwrap();
         assert_eq!(got.language, "Rust");
         assert_eq!(got.loc, 5);
@@ -167,13 +202,19 @@ mod tests {
 
     #[test]
     fn save_and_load_roundtrip() {
-        let dir = std::env::temp_dir().join("code-seek_cache_unit");
+        let dir = std::env::temp_dir().join("code_seek_cache_unit");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let cache_path = dir.join("cache.json");
 
-        let mut cache = Cache { entries: HashMap::new() };
-        cache.insert("src/lib.rs".to_owned(), &make_file_result(), "myhash".to_owned());
+        let mut cache = Cache {
+            entries: HashMap::new(),
+        };
+        cache.insert(
+            "src/lib.rs".to_owned(),
+            &make_file_result(),
+            "myhash".to_owned(),
+        );
         cache.save(&cache_path);
 
         let loaded = load(&cache_path);
@@ -186,7 +227,7 @@ mod tests {
 
     #[test]
     fn cache_load_corrupt_json() {
-        let path = std::env::temp_dir().join("code-seek_cache_corrupt_unit.json");
+        let path = std::env::temp_dir().join("code_seek_cache_corrupt_unit.json");
         std::fs::write(&path, b"{{{bad json").unwrap();
         let cache = load(&path);
         assert!(cache.get("anything", "hash").is_none());
@@ -195,13 +236,15 @@ mod tests {
 
     #[test]
     fn cache_load_missing_file() {
-        let cache = load(std::path::Path::new("/nonexistent/code-seek_cache_unit.json"));
+        let cache = load(std::path::Path::new(
+            "/nonexistent/code_seek_cache_unit.json",
+        ));
         assert!(cache.get("anything", "hash").is_none());
     }
 
     #[test]
     fn cache_load_oversized_file_returns_empty() {
-        let path = std::env::temp_dir().join("code-seek_cache_oversized_unit.json");
+        let path = std::env::temp_dir().join("code_seek_cache_oversized_unit.json");
         let f = std::fs::File::create(&path).unwrap();
         f.set_len((MAX_CACHE_SIZE + 1) as u64).unwrap();
         drop(f);
@@ -212,7 +255,9 @@ mod tests {
 
     #[test]
     fn cache_insert_empty_result() {
-        let mut cache = Cache { entries: HashMap::new() };
+        let mut cache = Cache {
+            entries: HashMap::new(),
+        };
         let r = FileResult {
             path: PathBuf::from("empty.rs"),
             language: "Rust",

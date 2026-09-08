@@ -1,5 +1,4 @@
 use std::fs;
-use std::path::Path;
 
 const DEFAULT_CONFIG: &str = r#"[scan]
 follow_symlinks = false
@@ -19,18 +18,25 @@ ignore_dirs = [
     "Pods", "DerivedData",
     # Dart / Flutter
     ".dart_tool",
+    # Elixir
+    "_build", "deps",
     # General
     "vendor", "coverage", ".cache", "tmp", "temp",
 ]
 "#;
 
 pub(crate) fn run(force: bool) -> Result<(), Box<dyn std::error::Error>> {
-    let dir = Path::new(".code-seek");
-    if dir.exists() && !force {
-        return Err("'.code-seek/' already exists. Use --force to overwrite.".into());
+    let dir = crate::state::slot_dir().ok_or("cannot resolve XDG state directory")?;
+    let config_path = dir.join("config.toml");
+    if config_path.exists() && !force {
+        return Err(format!(
+            "'{}' already exists. Use --force to overwrite.",
+            config_path.display()
+        )
+        .into());
     }
-    fs::create_dir_all(dir)?;
-    fs::write(dir.join("config.toml"), DEFAULT_CONFIG)?;
-    println!("Initialized .code-seek/ with config.toml");
+    fs::create_dir_all(&dir)?;
+    fs::write(&config_path, DEFAULT_CONFIG)?;
+    println!("Initialized {} with config.toml", dir.display());
     Ok(())
 }

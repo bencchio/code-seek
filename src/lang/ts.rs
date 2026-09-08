@@ -6,20 +6,45 @@ use crate::model::{Entity, EntityType};
 /// TypeScript-only node kinds; everything else (functions, classes,
 /// methods, arrow functions, `export` wrappers) falls through to the
 /// shared JavaScript base. Type aliases are skipped: no matching entity type.
-pub(super) fn parse_node(node: Node<'_>, source: &str, loc_map: &LocMap, context: Context, depth: usize) -> Option<Entity> {
+pub(super) fn parse_node(
+    node: Node<'_>,
+    source: &str,
+    loc_map: &LocMap,
+    context: Context,
+    depth: usize,
+) -> Option<Entity> {
     let src = source.as_bytes();
     match node.kind() {
         "abstract_class_declaration" => {
             let name = name_field(node, src)?;
-            let children = body_children(node, source, loc_map, Context::TypeBody, depth, parse_node);
-            Some(container_entity(node, name, EntityType::Class, loc_map, children))
+            let children =
+                body_children(node, source, loc_map, Context::TypeBody, depth, parse_node);
+            Some(container_entity(
+                node,
+                name,
+                EntityType::Class,
+                loc_map,
+                children,
+            ))
         }
         "interface_declaration" => {
             let name = name_field(node, src)?;
-            let children = body_children(node, source, loc_map, Context::TypeBody, depth, parse_node);
-            Some(container_entity(node, name, EntityType::Trait, loc_map, children))
+            let children =
+                body_children(node, source, loc_map, Context::TypeBody, depth, parse_node);
+            Some(container_entity(
+                node,
+                name,
+                EntityType::Trait,
+                loc_map,
+                children,
+            ))
         }
-        "enum_declaration" => Some(leaf_entity(node, name_field(node, src)?, EntityType::Enum, loc_map)),
+        "enum_declaration" => Some(leaf_entity(
+            node,
+            name_field(node, src)?,
+            EntityType::Enum,
+            loc_map,
+        )),
         // `namespace X {}` parses as expression_statement > internal_module
         "expression_statement" => {
             let child = node.named_child(0)?;
@@ -31,12 +56,19 @@ pub(super) fn parse_node(node: Node<'_>, source: &str, loc_map: &LocMap, context
         }
         "internal_module" => {
             let name = name_field(node, src)?;
-            let children = body_children(node, source, loc_map, Context::TopLevel, depth, parse_node);
-            Some(container_entity(node, name, EntityType::Namespace, loc_map, children))
+            let children =
+                body_children(node, source, loc_map, Context::TopLevel, depth, parse_node);
+            Some(container_entity(
+                node,
+                name,
+                EntityType::Namespace,
+                loc_map,
+                children,
+            ))
         }
-        "method_signature" | "abstract_method_signature" if context == Context::TypeBody => {
-            Some(leaf_entity(node, name_field(node, src)?, EntityType::Method, loc_map))
-        }
+        "method_signature" | "abstract_method_signature" if context == Context::TypeBody => Some(
+            leaf_entity(node, name_field(node, src)?, EntityType::Method, loc_map),
+        ),
         _ => js::parse_common(node, source, loc_map, context, depth, parse_node),
     }
 }
@@ -46,8 +78,12 @@ mod tests {
     use super::*;
     use crate::model::{Dependency, DependencyKind};
 
-    fn parse(src: &str) -> Vec<Entity> { crate::lang::test_parse("TypeScript", src).entities }
-    fn imports(src: &str) -> Vec<String> { crate::lang::test_parse("TypeScript", src).imports }
+    fn parse(src: &str) -> Vec<Entity> {
+        crate::lang::test_parse("TypeScript", src).entities
+    }
+    fn imports(src: &str) -> Vec<String> {
+        crate::lang::test_parse("TypeScript", src).imports
+    }
     fn resolve(raw: &[String]) -> Vec<Dependency> {
         crate::lang::resolve_imports("TypeScript", raw, &Default::default())
     }
@@ -68,7 +104,12 @@ mod tests {
         assert_eq!(entities[0].name, "Animal");
         assert_eq!(entities[0].entity_type, EntityType::Class);
         assert_eq!(entities[0].children.len(), 2);
-        assert!(entities[0].children.iter().all(|c| c.entity_type == EntityType::Method));
+        assert!(
+            entities[0]
+                .children
+                .iter()
+                .all(|c| c.entity_type == EntityType::Method)
+        );
         assert!(entities[0].children.iter().any(|c| c.name == "constructor"));
         assert!(entities[0].children.iter().any(|c| c.name == "speak"));
     }
@@ -87,13 +128,19 @@ mod tests {
 
     #[test]
     fn parses_interface_as_trait() {
-        let src = "interface Serializer {\n  serialize(): string;\n  deserialize(data: string): void;\n}";
+        let src =
+            "interface Serializer {\n  serialize(): string;\n  deserialize(data: string): void;\n}";
         let entities = parse(src);
         assert_eq!(entities.len(), 1);
         assert_eq!(entities[0].name, "Serializer");
         assert_eq!(entities[0].entity_type, EntityType::Trait);
         assert_eq!(entities[0].children.len(), 2);
-        assert!(entities[0].children.iter().all(|c| c.entity_type == EntityType::Method));
+        assert!(
+            entities[0]
+                .children
+                .iter()
+                .all(|c| c.entity_type == EntityType::Method)
+        );
     }
 
     #[test]
@@ -106,14 +153,25 @@ mod tests {
 
     #[test]
     fn parses_namespace_with_children() {
-        let src = "namespace Utils {\n  export function helper(): void {}\n  export class Tool {}\n}";
+        let src =
+            "namespace Utils {\n  export function helper(): void {}\n  export class Tool {}\n}";
         let entities = parse(src);
         assert_eq!(entities.len(), 1);
         assert_eq!(entities[0].name, "Utils");
         assert_eq!(entities[0].entity_type, EntityType::Namespace);
         assert_eq!(entities[0].children.len(), 2);
-        assert!(entities[0].children.iter().any(|c| c.name == "helper" && c.entity_type == EntityType::Function));
-        assert!(entities[0].children.iter().any(|c| c.name == "Tool" && c.entity_type == EntityType::Class));
+        assert!(
+            entities[0]
+                .children
+                .iter()
+                .any(|c| c.name == "helper" && c.entity_type == EntityType::Function)
+        );
+        assert!(
+            entities[0]
+                .children
+                .iter()
+                .any(|c| c.name == "Tool" && c.entity_type == EntityType::Class)
+        );
     }
 
     #[test]
@@ -186,10 +244,30 @@ mod tests {
         let src = "function alpha() {}\nconst beta = () => {}\nclass Gamma {}\ninterface Delta {}\nenum Epsilon {}\n";
         let entities = parse(src);
         assert_eq!(entities.len(), 5);
-        assert!(entities.iter().any(|e| e.name == "alpha" && e.entity_type == EntityType::Function));
-        assert!(entities.iter().any(|e| e.name == "beta" && e.entity_type == EntityType::Function));
-        assert!(entities.iter().any(|e| e.name == "Gamma" && e.entity_type == EntityType::Class));
-        assert!(entities.iter().any(|e| e.name == "Delta" && e.entity_type == EntityType::Trait));
-        assert!(entities.iter().any(|e| e.name == "Epsilon" && e.entity_type == EntityType::Enum));
+        assert!(
+            entities
+                .iter()
+                .any(|e| e.name == "alpha" && e.entity_type == EntityType::Function)
+        );
+        assert!(
+            entities
+                .iter()
+                .any(|e| e.name == "beta" && e.entity_type == EntityType::Function)
+        );
+        assert!(
+            entities
+                .iter()
+                .any(|e| e.name == "Gamma" && e.entity_type == EntityType::Class)
+        );
+        assert!(
+            entities
+                .iter()
+                .any(|e| e.name == "Delta" && e.entity_type == EntityType::Trait)
+        );
+        assert!(
+            entities
+                .iter()
+                .any(|e| e.name == "Epsilon" && e.entity_type == EntityType::Enum)
+        );
     }
 }

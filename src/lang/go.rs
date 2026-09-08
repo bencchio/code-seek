@@ -1,25 +1,42 @@
 use tree_sitter::Node;
 
-use super::{Context, LocMap, classify_path, collect_children, container_entity, leaf_entity, name_field};
+use super::{
+    Context, LocMap, classify_path, collect_children, container_entity, leaf_entity, name_field,
+};
 use crate::model::{Dependency, Entity, EntityType};
 
-pub(super) fn parse_node(node: Node<'_>, source: &str, loc_map: &LocMap, _context: Context, depth: usize) -> Option<Entity> {
+pub(super) fn parse_node(
+    node: Node<'_>,
+    source: &str,
+    loc_map: &LocMap,
+    _context: Context,
+    depth: usize,
+) -> Option<Entity> {
     let src = source.as_bytes();
     match node.kind() {
-        "function_declaration" => {
-            Some(leaf_entity(node, name_field(node, src)?, EntityType::Function, loc_map))
-        }
-        "method_declaration" => {
-            Some(leaf_entity(node, name_field(node, src)?, EntityType::Method, loc_map))
-        }
-        "type_declaration" => {
-            parse_type_declaration(node, source, loc_map, depth)
-        }
+        "function_declaration" => Some(leaf_entity(
+            node,
+            name_field(node, src)?,
+            EntityType::Function,
+            loc_map,
+        )),
+        "method_declaration" => Some(leaf_entity(
+            node,
+            name_field(node, src)?,
+            EntityType::Method,
+            loc_map,
+        )),
+        "type_declaration" => parse_type_declaration(node, source, loc_map, depth),
         _ => None,
     }
 }
 
-fn parse_type_declaration(node: Node<'_>, source: &str, loc_map: &LocMap, depth: usize) -> Option<Entity> {
+fn parse_type_declaration(
+    node: Node<'_>,
+    source: &str,
+    loc_map: &LocMap,
+    depth: usize,
+) -> Option<Entity> {
     let src = source.as_bytes();
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
@@ -33,7 +50,13 @@ fn parse_type_declaration(node: Node<'_>, source: &str, loc_map: &LocMap, depth:
     None
 }
 
-fn parse_type_body(node: Node<'_>, name: String, source: &str, loc_map: &LocMap, depth: usize) -> Option<Entity> {
+fn parse_type_body(
+    node: Node<'_>,
+    name: String,
+    source: &str,
+    loc_map: &LocMap,
+    depth: usize,
+) -> Option<Entity> {
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
         match child.kind() {
@@ -41,14 +64,29 @@ fn parse_type_body(node: Node<'_>, name: String, source: &str, loc_map: &LocMap,
                 return Some(leaf_entity(node, name, EntityType::Struct, loc_map));
             }
             "interface_type" => {
-                let children = collect_children(child, source, loc_map, Context::TypeBody, depth + 1, |n, s, l, _c, _d| {
-                    let src = s.as_bytes();
-                    match n.kind() {
-                        "method_elem" => Some(leaf_entity(n, name_field(n, src)?, EntityType::Method, l)),
-                        _ => None,
-                    }
-                });
-                return Some(container_entity(node, name, EntityType::Trait, loc_map, children));
+                let children = collect_children(
+                    child,
+                    source,
+                    loc_map,
+                    Context::TypeBody,
+                    depth + 1,
+                    |n, s, l, _c, _d| {
+                        let src = s.as_bytes();
+                        match n.kind() {
+                            "method_elem" => {
+                                Some(leaf_entity(n, name_field(n, src)?, EntityType::Method, l))
+                            }
+                            _ => None,
+                        }
+                    },
+                );
+                return Some(container_entity(
+                    node,
+                    name,
+                    EntityType::Trait,
+                    loc_map,
+                    children,
+                ));
             }
             _ => {}
         }
@@ -83,10 +121,12 @@ fn extract_paths(raw: &str) -> Vec<String> {
             if let Some(p) = extract_quoted(trimmed) {
                 paths.push(p);
             }
-        } else if !trimmed.is_empty() && trimmed != ")"
-            && let Some(p) = extract_quoted(trimmed) {
-                paths.push(p);
-            }
+        } else if !trimmed.is_empty()
+            && trimmed != ")"
+            && let Some(p) = extract_quoted(trimmed)
+        {
+            paths.push(p);
+        }
     }
     paths
 }
@@ -112,8 +152,12 @@ mod tests {
     use super::*;
     use crate::model::DependencyKind;
 
-    fn parse(src: &str) -> Vec<Entity> { crate::lang::test_parse("Go", src).entities }
-    fn imports(src: &str) -> Vec<String> { crate::lang::test_parse("Go", src).imports }
+    fn parse(src: &str) -> Vec<Entity> {
+        crate::lang::test_parse("Go", src).entities
+    }
+    fn imports(src: &str) -> Vec<String> {
+        crate::lang::test_parse("Go", src).imports
+    }
 
     #[test]
     fn collects_block_imports() {
@@ -161,7 +205,12 @@ mod tests {
         assert_eq!(entities[0].name, "Animal");
         assert_eq!(entities[0].entity_type, EntityType::Trait);
         assert_eq!(entities[0].children.len(), 2);
-        assert!(entities[0].children.iter().all(|c| c.entity_type == EntityType::Method));
+        assert!(
+            entities[0]
+                .children
+                .iter()
+                .all(|c| c.entity_type == EntityType::Method)
+        );
         assert!(entities[0].children.iter().any(|c| c.name == "Speak"));
         assert!(entities[0].children.iter().any(|c| c.name == "Move"));
     }
@@ -171,7 +220,10 @@ mod tests {
         let src = "type Foo struct {}\nfunc (f *Foo) Bar() int { return 0 }";
         let entities = parse(src);
         assert_eq!(entities.len(), 2);
-        let method = entities.iter().find(|e| e.entity_type == EntityType::Method).unwrap();
+        let method = entities
+            .iter()
+            .find(|e| e.entity_type == EntityType::Method)
+            .unwrap();
         assert_eq!(method.name, "Bar");
     }
 

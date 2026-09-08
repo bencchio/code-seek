@@ -3,12 +3,14 @@ use std::path::PathBuf;
 
 mod cache;
 mod config;
+mod gitignore;
 mod init;
 mod lang;
 mod log;
 mod mcp;
 mod model;
 mod scan;
+mod state;
 mod walker;
 
 #[derive(Parser)]
@@ -43,6 +45,8 @@ enum Command {
         ignore: Vec<String>,
         #[arg(long, default_value = "all", value_name = "INFO")]
         info: String,
+        #[arg(long = "no-gitignore")]
+        no_gitignore: bool,
     },
 }
 
@@ -51,12 +55,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     match cli.command {
         Command::Init { force } => init::run(force)?,
         Command::Mcp => mcp::run()?,
-        Command::Scan { path, lang, format, filter_match, max_depth, ignore, info } => {
+        Command::Scan {
+            path,
+            lang,
+            format,
+            filter_match,
+            max_depth,
+            ignore,
+            info,
+            no_gitignore,
+        } => {
             let info_lower = info.to_lowercase();
             if !["all", "no-tests", "tests-only"].contains(&info_lower.as_str()) {
-                return Err(format!("invalid --info value '{info}'. Valid: all, no-tests, tests-only").into());
+                return Err(format!(
+                    "invalid --info value '{info}'. Valid: all, no-tests, tests-only"
+                )
+                .into());
             }
-            scan::run(&path, &lang, &format, filter_match.as_deref().unwrap_or(""), max_depth, &ignore, &info_lower)?;
+            scan::run(
+                &path,
+                &lang,
+                &format,
+                filter_match.as_deref().unwrap_or(""),
+                max_depth,
+                &ignore,
+                &info_lower,
+                !no_gitignore,
+            )?;
         }
     }
     Ok(())

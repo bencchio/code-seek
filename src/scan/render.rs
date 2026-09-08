@@ -63,7 +63,14 @@ pub(super) fn print_tree(results: &[FileResult]) {
     );
 }
 
-fn print_entities(entities: &[Entity], prefix: &str, col: usize, lw: usize, rw: usize, errors: &[SyntaxError]) {
+fn print_entities(
+    entities: &[Entity],
+    prefix: &str,
+    col: usize,
+    lw: usize,
+    rw: usize,
+    errors: &[SyntaxError],
+) {
     let count = entities.len();
     for (i, e) in entities.iter().enumerate() {
         let is_last = i + 1 == count;
@@ -75,7 +82,11 @@ fn print_entities(entities: &[Entity], prefix: &str, col: usize, lw: usize, rw: 
             entity_icon(&e.entity_type),
             e.name,
         );
-        let status = if entity_has_error(e, errors) { "⚠" } else { "✓" };
+        let status = if entity_has_error(e, errors) {
+            "⚠"
+        } else {
+            "✓"
+        };
         println!(
             "{}{}  {:>lw$} LOC  [{:>rw$}-{:>rw$}]  {}",
             label,
@@ -93,7 +104,9 @@ fn print_entities(entities: &[Entity], prefix: &str, col: usize, lw: usize, rw: 
 }
 
 fn entity_has_error(entity: &Entity, errors: &[SyntaxError]) -> bool {
-    errors.iter().any(|e| e.start_line <= entity.end_line && e.end_line >= entity.start_line)
+    errors
+        .iter()
+        .any(|e| e.start_line <= entity.end_line && e.end_line >= entity.start_line)
 }
 
 fn header_width(result: &FileResult) -> usize {
@@ -151,12 +164,14 @@ pub(crate) fn results_to_json(results: &[FileResult], scan_path: &Path) -> serde
             let errors_json: Vec<serde_json::Value> = r
                 .errors
                 .iter()
-                .map(|e| serde_json::json!({
-                    "kind": e.kind,
-                    "node_kind": e.node_kind,
-                    "start_line": e.start_line,
-                    "end_line": e.end_line,
-                }))
+                .map(|e| {
+                    serde_json::json!({
+                        "kind": e.kind,
+                        "node_kind": e.node_kind,
+                        "start_line": e.start_line,
+                        "end_line": e.end_line,
+                    })
+                })
                 .collect();
             serde_json::json!({
                 "path": path_str,
@@ -185,7 +200,10 @@ pub(super) fn print_json(
     results: &[FileResult],
     scan_path: &Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    println!("{}", serde_json::to_string_pretty(&results_to_json(results, scan_path))?);
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&results_to_json(results, scan_path))?
+    );
     Ok(())
 }
 
@@ -203,20 +221,32 @@ pub(super) fn json_entities(
             } else {
                 format!("{parent_path} > {segment}")
             };
-            serde_json::json!({
-                "entity_path": entity_path,
-                "name": e.name,
-                "entity_type": entity_type_str(&e.entity_type),
-                "loc": e.loc,
-                "start_line": e.start_line,
-                "end_line": e.end_line,
-                "children": json_entities(&e.children, file_path, &entity_path),
-            })
+            with_kind(
+                serde_json::json!({
+                    "entity_path": entity_path,
+                    "name": e.name,
+                    "entity_type": entity_type_str(&e.entity_type),
+                    "loc": e.loc,
+                    "start_line": e.start_line,
+                    "end_line": e.end_line,
+                    "children": json_entities(&e.children, file_path, &entity_path),
+                }),
+                &e.kind,
+            )
         })
         .collect()
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+pub(super) fn with_kind(mut value: serde_json::Value, kind: &str) -> serde_json::Value {
+    if !kind.is_empty() {
+        if let Some(obj) = value.as_object_mut() {
+            obj.insert("kind".to_owned(), serde_json::json!(kind));
+        }
+    }
+    value
+}
 
 pub(super) fn entity_path_segment(et: &EntityType, name: &str) -> String {
     match et {
@@ -249,13 +279,23 @@ pub(super) fn count_entities(entities: &[Entity]) -> usize {
 
 fn format_errors(r: &FileResult) -> String {
     let n = r.errors.len();
-    if n == 0 { return String::new(); }
+    if n == 0 {
+        return String::new();
+    }
     plural(n, "error", "errors")
 }
 
 fn format_deps(r: &FileResult) -> String {
-    let ext = r.dependencies.iter().filter(|d| matches!(d.kind, DependencyKind::External)).count();
-    let int = r.dependencies.iter().filter(|d| matches!(d.kind, DependencyKind::Internal)).count();
+    let ext = r
+        .dependencies
+        .iter()
+        .filter(|d| matches!(d.kind, DependencyKind::External))
+        .count();
+    let int = r
+        .dependencies
+        .iter()
+        .filter(|d| matches!(d.kind, DependencyKind::Internal))
+        .count();
     if ext == 0 && int == 0 {
         return String::new();
     }
@@ -307,8 +347,14 @@ mod tests {
     #[test]
     fn entity_path_segment_prefixes_impl_trait_namespace() {
         assert_eq!(entity_path_segment(&EntityType::Impl, "Foo"), "impl Foo");
-        assert_eq!(entity_path_segment(&EntityType::Trait, "Animal"), "trait Animal");
-        assert_eq!(entity_path_segment(&EntityType::Namespace, "utils"), "mod utils");
+        assert_eq!(
+            entity_path_segment(&EntityType::Trait, "Animal"),
+            "trait Animal"
+        );
+        assert_eq!(
+            entity_path_segment(&EntityType::Namespace, "utils"),
+            "mod utils"
+        );
     }
 
     #[test]
@@ -336,7 +382,12 @@ mod tests {
     fn entity_has_error_overlapping_range() {
         use crate::model::SyntaxError;
         let entity = Entity::new("foo".into(), EntityType::Function, 5, 3, 10);
-        let err = SyntaxError { kind: "error".into(), node_kind: "ERROR".into(), start_line: 5, end_line: 5 };
+        let err = SyntaxError {
+            kind: "error".into(),
+            node_kind: "ERROR".into(),
+            start_line: 5,
+            end_line: 5,
+        };
         assert!(entity_has_error(&entity, &[err]));
     }
 
@@ -344,7 +395,12 @@ mod tests {
     fn entity_has_error_non_overlapping_range() {
         use crate::model::SyntaxError;
         let entity = Entity::new("foo".into(), EntityType::Function, 5, 3, 10);
-        let err = SyntaxError { kind: "error".into(), node_kind: "ERROR".into(), start_line: 15, end_line: 20 };
+        let err = SyntaxError {
+            kind: "error".into(),
+            node_kind: "ERROR".into(),
+            start_line: 15,
+            end_line: 20,
+        };
         assert!(!entity_has_error(&entity, &[err]));
     }
 
@@ -378,9 +434,14 @@ mod tests {
             entities: vec![],
             imports: vec![],
             dependencies: vec![],
-            errors: (0..n).map(|_| SyntaxError {
-                kind: "error".into(), node_kind: "ERROR".into(), start_line: 1, end_line: 1,
-            }).collect(),
+            errors: (0..n)
+                .map(|_| SyntaxError {
+                    kind: "error".into(),
+                    node_kind: "ERROR".into(),
+                    start_line: 1,
+                    end_line: 1,
+                })
+                .collect(),
         };
         assert_eq!(format_errors(&make(1)), "1 error");
         assert_eq!(format_errors(&make(2)), "2 errors");

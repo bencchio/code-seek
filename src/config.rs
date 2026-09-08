@@ -1,5 +1,4 @@
 use serde::Deserialize;
-use std::path::Path;
 
 #[derive(Deserialize, Default)]
 #[serde(default)]
@@ -7,7 +6,9 @@ pub(crate) struct Config {
     pub(crate) scan: ScanConfig,
 }
 
-fn default_max_file_size_mb() -> f64 { 10.0 }
+fn default_max_file_size_mb() -> f64 {
+    10.0
+}
 
 #[derive(Deserialize)]
 pub(crate) struct ScanConfig {
@@ -30,7 +31,10 @@ impl Default for ScanConfig {
 }
 
 pub(crate) fn load() -> Config {
-    let path = Path::new(".code-seek/config.toml");
+    let Some(slot) = crate::state::slot_dir() else {
+        return Config::default();
+    };
+    let path = slot.join("config.toml");
     let Ok(content) = std::fs::read_to_string(path) else {
         return Config::default();
     };

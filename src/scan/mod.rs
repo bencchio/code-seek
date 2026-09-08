@@ -4,11 +4,7 @@ pub(crate) mod render;
 pub(crate) use filter::{find_entity, locate, summarize};
 pub(crate) use render::results_to_json;
 
-use crate::{
-    cache, config, lang,
-    model::FileResult,
-    walker,
-};
+use crate::{cache, config, gitignore, lang, model::FileResult, walker};
 use std::collections::HashSet;
 use std::{fs, path::Path};
 
@@ -20,8 +16,17 @@ pub(crate) fn run(
     max_depth: Option<usize>,
     extra_ignore: &[String],
     info: &str,
+    respect_gitignore: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let results = build_scan_results(path, lang_filter, match_pattern, max_depth, extra_ignore, info)?;
+    let results = build_scan_results(
+        path,
+        lang_filter,
+        match_pattern,
+        max_depth,
+        extra_ignore,
+        info,
+        respect_gitignore,
+    )?;
     match format {
         "json" => render::print_json(&results, path)?,
         _ => render::print_tree(&results),
@@ -36,23 +41,43 @@ pub(crate) fn build_scan_results(
     max_depth: Option<usize>,
     extra_ignore: &[String],
     info: &str,
+    respect_gitignore: bool,
 ) -> Result<Vec<FileResult>, Box<dyn std::error::Error>> {
     if !path.exists() {
         return Err(format!("'{}' does not exist", path.display()).into());
     }
     for lang in lang_filter {
         let lower = lang.to_lowercase();
-        if !lang::LANGUAGES.iter().any(|l| l.aliases.contains(&lower.as_str())) {
+        if !lang::LANGUAGES
+            .iter()
+            .any(|l| l.aliases.contains(&lower.as_str()))
+        {
             return Err(format!("unrecognized language: '{lang}'").into());
         }
     }
     let cfg = config::load();
-    let all_ignore: Vec<String> = cfg.scan.ignore_dirs.iter().cloned()
+    let all_ignore: Vec<String> = cfg
+        .scan
+        .ignore_dirs
+        .iter()
+        .cloned()
         .chain(extra_ignore.iter().cloned())
         .collect();
-    let files = walker::walk(path, &all_ignore, cfg.scan.follow_symlinks);
-    let cache_path = Path::new(".code-seek/cache.json");
-    let mut file_cache = cache::load(cache_path);
+    let allowed = respect_gitignore
+        .then(|| gitignore::allowed(path))
+        .flatten();
+    let files = walker::walk(
+        path,
+        &all_ignore,
+        cfg.scan.follow_symlinks,
+        allowed.as_ref(),
+    );
+    let slot = crate::state::slot_dir();
+    let cache_path = slot.as_ref().map(|s| s.join("cache.json"));
+    let mut file_cache = cache_path
+        .as_deref()
+        .map(cache::load)
+        .unwrap_or_else(cache::empty);
     let mut cache_dirty = false;
 
     let mut results: Vec<FileResult> = files
@@ -61,7 +86,9 @@ pub(crate) fn build_scan_results(
         .collect();
 
     if cache_dirty {
-        file_cache.save(cache_path);
+        if let Some(path) = cache_path.as_deref() {
+            file_cache.save(path);
+        }
     }
     resolve_dependencies(&mut results);
     apply_filters(&mut results, match_pattern, max_depth, info);

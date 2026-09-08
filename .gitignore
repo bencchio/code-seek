@@ -3,3 +3,9 @@ src/target/
 .code-seek/
 .notes/
 docs/SPECS.md
+
+# makepkg leftovers, anchored so they cannot match the crate's own src/
+/packaging/aur/src/
+/packaging/aur/pkg/
+/packaging/aur/*.tar.gz
+/packaging/aur/*.tar.zst

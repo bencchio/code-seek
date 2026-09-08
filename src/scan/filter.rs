@@ -56,7 +56,10 @@ pub(super) fn filter_entities(
         .into_iter()
         .filter_map(|mut e| {
             e.children = filter_entities(e.children, pattern, max_depth, depth + 1);
-            if pattern.is_empty() || e.name.to_lowercase().contains(pattern) || !e.children.is_empty() {
+            if pattern.is_empty()
+                || e.name.to_lowercase().contains(pattern)
+                || !e.children.is_empty()
+            {
                 Some(e)
             } else {
                 None
@@ -68,34 +71,46 @@ pub(super) fn filter_entities(
 pub(crate) fn find_entity(results: &[FileResult], entity_path: &str) -> Option<serde_json::Value> {
     let (file_seg, rest) = entity_path.split_once(" > ")?;
 
-    let result = results.iter().find(|r| r.path.display().to_string() == file_seg)?;
+    let result = results
+        .iter()
+        .find(|r| r.path.display().to_string() == file_seg)?;
     let file_path_str = result.path.display().to_string();
 
     let mut current: &[Entity] = &result.entities;
     let mut found: Option<&Entity> = None;
 
     for seg in rest.split(" > ") {
-        found = current.iter().find(|e| render::entity_path_segment(&e.entity_type, &e.name) == seg);
+        found = current
+            .iter()
+            .find(|e| render::entity_path_segment(&e.entity_type, &e.name) == seg);
         match found {
             Some(e) => current = &e.children,
             None => return None,
         }
     }
 
-    found.map(|e| serde_json::json!({
-        "entity_path": entity_path,
-        "name": e.name,
-        "entity_type": render::entity_type_str(&e.entity_type),
-        "loc": e.loc,
-        "start_line": e.start_line,
-        "end_line": e.end_line,
-        "children": render::json_entities(&e.children, &file_path_str, entity_path),
-    }))
+    found.map(|e| {
+        render::with_kind(
+            serde_json::json!({
+                "entity_path": entity_path,
+                "name": e.name,
+                "entity_type": render::entity_type_str(&e.entity_type),
+                "loc": e.loc,
+                "start_line": e.start_line,
+                "end_line": e.end_line,
+                "children": render::json_entities(&e.children, &file_path_str, entity_path),
+            }),
+            &e.kind,
+        )
+    })
 }
 
 pub(crate) fn summarize(results: &[FileResult], scan_path: &std::path::Path) -> serde_json::Value {
     let total_loc: usize = results.iter().map(|r| r.loc).sum();
-    let total_entities: usize = results.iter().map(|r| render::count_entities(&r.entities)).sum();
+    let total_entities: usize = results
+        .iter()
+        .map(|r| render::count_entities(&r.entities))
+        .sum();
 
     let mut lang_map: std::collections::BTreeMap<&str, (usize, usize, usize)> =
         std::collections::BTreeMap::new();
@@ -152,14 +167,17 @@ fn collect_matches(
         let segment = render::entity_path_segment(&e.entity_type, &e.name);
         let entity_path = format!("{parent_path} > {segment}");
         if e.name.to_lowercase() == name_lower {
-            matches.push(serde_json::json!({
-                "entity_path": entity_path,
-                "name": e.name,
-                "entity_type": render::entity_type_str(&e.entity_type),
-                "loc": e.loc,
-                "start_line": e.start_line,
-                "end_line": e.end_line,
-            }));
+            matches.push(render::with_kind(
+                serde_json::json!({
+                    "entity_path": entity_path,
+                    "name": e.name,
+                    "entity_type": render::entity_type_str(&e.entity_type),
+                    "loc": e.loc,
+                    "start_line": e.start_line,
+                    "end_line": e.end_line,
+                }),
+                &e.kind,
+            ));
         }
         collect_matches(&e.children, name_lower, &entity_path, matches);
     }
@@ -170,7 +188,9 @@ fn count_by_type(
     counts: &mut std::collections::BTreeMap<&'static str, usize>,
 ) {
     for e in entities {
-        *counts.entry(render::entity_type_str(&e.entity_type)).or_default() += 1;
+        *counts
+            .entry(render::entity_type_str(&e.entity_type))
+            .or_default() += 1;
         count_by_type(&e.children, counts);
     }
 }
@@ -187,7 +207,15 @@ mod tests {
     }
 
     fn make_file_result(path: &str, entities: Vec<Entity>) -> FileResult {
-        FileResult { path: std::path::PathBuf::from(path), language: "Rust", loc: 10, entities, imports: vec![], dependencies: vec![], errors: vec![] }
+        FileResult {
+            path: std::path::PathBuf::from(path),
+            language: "Rust",
+            loc: 10,
+            entities,
+            imports: vec![],
+            dependencies: vec![],
+            errors: vec![],
+        }
     }
 
     #[test]
@@ -338,17 +366,36 @@ mod tests {
 
     #[test]
     fn locate_returns_matching_entities_across_files() {
-        let r1 = make_file_result("src/a.rs", vec![make_entity("run", EntityType::Function, vec![])]);
-        let r2 = make_file_result("src/b.rs", vec![make_entity("run", EntityType::Function, vec![])]);
+        let r1 = make_file_result(
+            "src/a.rs",
+            vec![make_entity("run", EntityType::Function, vec![])],
+        );
+        let r2 = make_file_result(
+            "src/b.rs",
+            vec![make_entity("run", EntityType::Function, vec![])],
+        );
         let matches = locate(&[r1, r2], "run");
         assert_eq!(matches.len(), 2);
-        assert!(matches[0]["entity_path"].as_str().unwrap().starts_with("src/a.rs"));
-        assert!(matches[1]["entity_path"].as_str().unwrap().starts_with("src/b.rs"));
+        assert!(
+            matches[0]["entity_path"]
+                .as_str()
+                .unwrap()
+                .starts_with("src/a.rs")
+        );
+        assert!(
+            matches[1]["entity_path"]
+                .as_str()
+                .unwrap()
+                .starts_with("src/b.rs")
+        );
     }
 
     #[test]
     fn locate_is_case_insensitive() {
-        let results = vec![make_file_result("src/a.rs", vec![make_entity("Run", EntityType::Function, vec![])])];
+        let results = vec![make_file_result(
+            "src/a.rs",
+            vec![make_entity("Run", EntityType::Function, vec![])],
+        )];
         let matches = locate(&results, "run");
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0]["name"], "Run");
@@ -356,7 +403,10 @@ mod tests {
 
     #[test]
     fn locate_returns_empty_when_no_match() {
-        let results = vec![make_file_result("src/a.rs", vec![make_entity("foo", EntityType::Function, vec![])])];
+        let results = vec![make_file_result(
+            "src/a.rs",
+            vec![make_entity("foo", EntityType::Function, vec![])],
+        )];
         assert!(locate(&results, "nonexistent").is_empty());
     }
 

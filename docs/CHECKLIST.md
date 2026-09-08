@@ -18,6 +18,11 @@ Completed increments per cycle. Items here are done and should not appear in the
 | Version | Date | Increment |
 | ------- | ---- | --------- |
 | 0.5.0   | 2026-07-14 | Security audit: MCP path traversal protection, cache symlink attack prevention, TOCTOU fixes, JSON-RPC serialization error handling, `main() -> Result`; docs: updated README/SPECS/ROADMAP/CHANGELOG; roadmap restructured into 0.5.x (CLI), 0.6.x (agent tools), post-0.6.x |
+| 0.5.1   | 2026-09-07 | Rename project to Code Seek: crate/CLI/MCP `code-seek`, state dir `.code-seek/` |
+| 0.5.2   | 2026-09-08 | XDG state: config and cache under `~/.local/state/code-seek/<basename>/`; no in-repo `.code-seek/` |
+| 0.5.3   | 2026-09-08 | Elixir parser (`.ex`/`.exs`): defmodule, def/defp, macros, protocol, impl, struct; entity `kind` |
+| 0.5.4   | 2026-09-08 | GitHub-ready main: MIT license, public readme, `main` rebuilt sanitized, git hooks activated |
+| 0.5.5   | 2026-09-08 | Packaging: `install.sh`, AUR `PKGBUILD`, crate metadata; scan honors `.gitignore` with `--no-gitignore` opt-out |
 
 ## Cycle 0.3.x — Dependencies & robustness
 

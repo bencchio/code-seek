@@ -7,7 +7,11 @@ const DEFAULT_VERSION: &str = "2024-11-05";
 
 fn negotiate_version(msg: &Value) -> &'static str {
     let client = msg["params"]["protocolVersion"].as_str().unwrap_or("");
-    SUPPORTED_VERSIONS.iter().copied().find(|&v| v == client).unwrap_or(DEFAULT_VERSION)
+    SUPPORTED_VERSIONS
+        .iter()
+        .copied()
+        .find(|&v| v == client)
+        .unwrap_or(DEFAULT_VERSION)
 }
 
 pub(crate) fn run() -> Result<(), Box<dyn std::error::Error>> {
@@ -74,10 +78,10 @@ fn handle_tools_call(id: Value, msg: &Value) -> Value {
     let args = params.get("arguments").cloned().unwrap_or(json!({}));
 
     match tool_name {
-        "scan"    => handle_scan(id, &args),
-        "entity"  => handle_entity(id, &args),
+        "scan" => handle_scan(id, &args),
+        "entity" => handle_entity(id, &args),
         "summary" => handle_summary(id, &args),
-        "locate"  => handle_locate(id, &args),
+        "locate" => handle_locate(id, &args),
         _ => json!({
             "jsonrpc": "2.0", "id": id,
             "error": {"code": -32602, "message": format!("Unknown tool: {tool_name}")}
@@ -96,7 +100,8 @@ fn validate_mcp_path(path_str: &str) -> Result<std::path::PathBuf, String> {
         return Err("path traversal not allowed".to_owned());
     }
     let path = std::path::Path::new(path_str);
-    path.canonicalize().map_err(|e| format!("invalid path: {e}"))
+    path.canonicalize()
+        .map_err(|e| format!("invalid path: {e}"))
 }
 
 fn handle_scan(id: Value, args: &Value) -> Value {
@@ -108,7 +113,9 @@ fn handle_scan(id: Value, args: &Value) -> Value {
     };
     let path = match validate_mcp_path(path_str) {
         Ok(p) => p,
-        Err(e) => return json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32602, "message": e}}),
+        Err(e) => {
+            return json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32602, "message": e}});
+        }
     };
 
     let lang_filter: Vec<String> = args
@@ -117,15 +124,30 @@ fn handle_scan(id: Value, args: &Value) -> Value {
         .map(|s| s.split(',').map(str::trim).map(str::to_owned).collect())
         .unwrap_or_default();
     let match_pattern = args.get("match").and_then(|m| m.as_str()).unwrap_or("");
-    let max_depth = args.get("max_depth").and_then(|d| d.as_u64()).map(|d| d as usize);
+    let max_depth = args
+        .get("max_depth")
+        .and_then(|d| d.as_u64())
+        .map(|d| d as usize);
     let extra_ignore: Vec<String> = args
         .get("ignore")
         .and_then(|i| i.as_str())
         .map(|s| s.split(',').map(str::trim).map(str::to_owned).collect())
         .unwrap_or_default();
     let info = args.get("info").and_then(|i| i.as_str()).unwrap_or("all");
+    let respect_gitignore = !args
+        .get("no_gitignore")
+        .and_then(|g| g.as_bool())
+        .unwrap_or(false);
 
-    match scan::build_scan_results(&path, &lang_filter, match_pattern, max_depth, &extra_ignore, info) {
+    match scan::build_scan_results(
+        &path,
+        &lang_filter,
+        match_pattern,
+        max_depth,
+        &extra_ignore,
+        info,
+        respect_gitignore,
+    ) {
         Ok(results) => {
             let text = match serde_json::to_string(&scan::results_to_json(&results, &path)) {
                 Ok(s) => s,
@@ -160,10 +182,12 @@ fn handle_entity(id: Value, args: &Value) -> Value {
     let file_path = entity_path.split(" > ").next().unwrap_or("");
     let path = match validate_mcp_path(file_path) {
         Ok(p) => p,
-        Err(e) => return json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32602, "message": e}}),
+        Err(e) => {
+            return json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32602, "message": e}});
+        }
     };
 
-    match scan::build_scan_results(&path, &[], "", None, &[], "all") {
+    match scan::build_scan_results(&path, &[], "", None, &[], "all", true) {
         Ok(results) => match scan::find_entity(&results, entity_path) {
             Some(v) => {
                 let text = match serde_json::to_string(&v) {
@@ -199,7 +223,9 @@ fn handle_summary(id: Value, args: &Value) -> Value {
     };
     let path = match validate_mcp_path(path_str) {
         Ok(p) => p,
-        Err(e) => return json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32602, "message": e}}),
+        Err(e) => {
+            return json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32602, "message": e}});
+        }
     };
 
     let lang_filter: Vec<String> = args
@@ -208,7 +234,7 @@ fn handle_summary(id: Value, args: &Value) -> Value {
         .map(|s| s.split(',').map(str::trim).map(str::to_owned).collect())
         .unwrap_or_default();
 
-    match scan::build_scan_results(&path, &lang_filter, "", None, &[], "all") {
+    match scan::build_scan_results(&path, &lang_filter, "", None, &[], "all", true) {
         Ok(results) => {
             let text = match serde_json::to_string(&scan::summarize(&results, &path)) {
                 Ok(s) => s,
@@ -244,7 +270,9 @@ fn handle_locate(id: Value, args: &Value) -> Value {
     };
     let path = match validate_mcp_path(path_str) {
         Ok(p) => p,
-        Err(e) => return json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32602, "message": e}}),
+        Err(e) => {
+            return json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32602, "message": e}});
+        }
     };
 
     let lang_filter: Vec<String> = args
@@ -253,7 +281,7 @@ fn handle_locate(id: Value, args: &Value) -> Value {
         .map(|s| s.split(',').map(str::trim).map(str::to_owned).collect())
         .unwrap_or_default();
 
-    match scan::build_scan_results(&path, &lang_filter, "", None, &[], "all") {
+    match scan::build_scan_results(&path, &lang_filter, "", None, &[], "all", true) {
         Ok(results) => {
             let matches = scan::locate(&results, name);
             let text = match serde_json::to_string(&serde_json::json!({
@@ -312,6 +340,10 @@ fn scan_tool_def() -> Value {
                 "ignore": {
                     "type": "string",
                     "description": "Comma-separated directory names to skip (e.g. \"target,node_modules\")"
+                },
+                "no_gitignore": {
+                    "type": "boolean",
+                    "description": "Include files git is told to ignore (default: false, they are hidden)"
                 },
                 "info": {
                     "type": "string",

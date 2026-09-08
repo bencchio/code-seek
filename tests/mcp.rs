@@ -1,15 +1,28 @@
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Command, Stdio};
 
-fn bin() -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/target/debug/code-seek")
+fn code_seek() -> std::path::PathBuf {
+    let target = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/target");
+    let debug = target.join("debug/code-seek");
+    if debug.exists() {
+        return debug;
+    }
+    target.join("release/code-seek")
+}
+
+fn command() -> Command {
+    let state = std::env::temp_dir().join("code_seek_test_xdg_state");
+    let _ = std::fs::create_dir_all(&state);
+    let mut c = Command::new(code_seek());
+    c.env("XDG_STATE_HOME", state);
+    c
 }
 
 const INIT_REQ: &str = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"0.1"}}}"#;
 const INIT_NOTIF: &str = r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#;
 
 fn run_mcp(requests: &[&str]) -> Vec<serde_json::Value> {
-    let mut child = Command::new(bin())
+    let mut child = command()
         .arg("mcp")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -71,7 +84,7 @@ fn mcp_tools_list_includes_all_tools() {
 
 #[test]
 fn mcp_scan_tool_returns_valid_json_structure() {
-    let dir = std::env::temp_dir().join("code-seek_mcp_scan");
+    let dir = std::env::temp_dir().join("code_seek_mcp_scan");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(
@@ -89,7 +102,8 @@ fn mcp_scan_tool_returns_valid_json_structure() {
 
     let content = responses[1]["result"]["content"].as_array().unwrap();
     let text = content[0]["text"].as_str().unwrap();
-    let scan: serde_json::Value = serde_json::from_str(text).expect("tool output must be valid JSON");
+    let scan: serde_json::Value =
+        serde_json::from_str(text).expect("tool output must be valid JSON");
 
     assert_eq!(scan["total_files"], 1);
     assert_eq!(scan["total_entities"], 1);
@@ -100,7 +114,7 @@ fn mcp_scan_tool_returns_valid_json_structure() {
 
 #[test]
 fn mcp_scan_tool_respects_match_filter() {
-    let dir = std::env::temp_dir().join("code-seek_mcp_match");
+    let dir = std::env::temp_dir().join("code_seek_mcp_match");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(
@@ -114,7 +128,9 @@ fn mcp_scan_tool_respects_match_filter() {
         dir.display()
     );
     let responses = run_mcp(&[INIT_REQ, INIT_NOTIF, &call]);
-    let text = responses[1]["result"]["content"][0]["text"].as_str().unwrap();
+    let text = responses[1]["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap();
     let scan: serde_json::Value = serde_json::from_str(text).unwrap();
 
     assert_eq!(scan["total_entities"], 1);
@@ -125,18 +141,26 @@ fn mcp_scan_tool_respects_match_filter() {
 
 #[test]
 fn mcp_unknown_tool_returns_error() {
-    let call = r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"noop","arguments":{}}}"#;
+    let call =
+        r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"noop","arguments":{}}}"#;
     let responses = run_mcp(&[INIT_REQ, INIT_NOTIF, call]);
     assert_eq!(responses.len(), 2);
-    assert!(responses[1].get("error").is_some(), "expected JSON-RPC error for unknown tool");
+    assert!(
+        responses[1].get("error").is_some(),
+        "expected JSON-RPC error for unknown tool"
+    );
 }
 
 #[test]
 fn mcp_entity_tool_returns_entity() {
-    let dir = std::env::temp_dir().join("code-seek_mcp_entity");
+    let dir = std::env::temp_dir().join("code_seek_mcp_entity");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(dir.join("lib.rs"), "fn add(a: i32, b: i32) -> i32 { a + b }").unwrap();
+    std::fs::write(
+        dir.join("lib.rs"),
+        "fn add(a: i32, b: i32) -> i32 { a + b }",
+    )
+    .unwrap();
 
     let entity_path = format!("{}/lib.rs > add", dir.display());
     let call = format!(
@@ -147,7 +171,9 @@ fn mcp_entity_tool_returns_entity() {
     assert_eq!(responses.len(), 2);
     assert!(responses[1].get("error").is_none());
 
-    let text = responses[1]["result"]["content"][0]["text"].as_str().unwrap();
+    let text = responses[1]["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap();
     let entity: serde_json::Value = serde_json::from_str(text).unwrap();
     assert_eq!(entity["name"], "add");
     assert_eq!(entity["entity_type"], "Function");
@@ -161,15 +187,22 @@ fn mcp_entity_tool_returns_error_for_unknown() {
     let call = r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"entity","arguments":{"entity_path":"src/main.rs > nonexistent"}}}"#;
     let responses = run_mcp(&[INIT_REQ, INIT_NOTIF, call]);
     assert_eq!(responses.len(), 2);
-    assert!(responses[1].get("error").is_some(), "expected error for unknown entity_path");
+    assert!(
+        responses[1].get("error").is_some(),
+        "expected error for unknown entity_path"
+    );
 }
 
 #[test]
 fn mcp_summary_tool_returns_structure() {
-    let dir = std::env::temp_dir().join("code-seek_mcp_summary");
+    let dir = std::env::temp_dir().join("code_seek_mcp_summary");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(dir.join("lib.rs"), "fn add(a: i32, b: i32) -> i32 { a + b }").unwrap();
+    std::fs::write(
+        dir.join("lib.rs"),
+        "fn add(a: i32, b: i32) -> i32 { a + b }",
+    )
+    .unwrap();
 
     let call = format!(
         r#"{{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{{"name":"summary","arguments":{{"path":"{}"}}}}}}"#,
@@ -179,19 +212,29 @@ fn mcp_summary_tool_returns_structure() {
     assert_eq!(responses.len(), 2);
     assert!(responses[1].get("error").is_none());
 
-    let text = responses[1]["result"]["content"][0]["text"].as_str().unwrap();
+    let text = responses[1]["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap();
     let summary: serde_json::Value = serde_json::from_str(text).unwrap();
     assert_eq!(summary["total_files"], 1);
     assert_eq!(summary["total_entities"], 1);
-    assert!(summary["by_language"].as_array().is_some_and(|a| !a.is_empty()));
-    assert!(summary["by_entity_type"].as_array().is_some_and(|a| !a.is_empty()));
+    assert!(
+        summary["by_language"]
+            .as_array()
+            .is_some_and(|a| !a.is_empty())
+    );
+    assert!(
+        summary["by_entity_type"]
+            .as_array()
+            .is_some_and(|a| !a.is_empty())
+    );
 
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
 #[test]
 fn mcp_locate_tool_returns_matches() {
-    let dir = std::env::temp_dir().join("code-seek_mcp_locate");
+    let dir = std::env::temp_dir().join("code_seek_mcp_locate");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("lib.rs"), "fn run() {}\nfn helper() {}").unwrap();
@@ -202,9 +245,15 @@ fn mcp_locate_tool_returns_matches() {
     );
     let responses = run_mcp(&[INIT_REQ, INIT_NOTIF, &call]);
     assert_eq!(responses.len(), 2);
-    assert!(responses[1].get("error").is_none(), "unexpected error: {:?}", responses[1]);
+    assert!(
+        responses[1].get("error").is_none(),
+        "unexpected error: {:?}",
+        responses[1]
+    );
 
-    let text = responses[1]["result"]["content"][0]["text"].as_str().unwrap();
+    let text = responses[1]["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap();
     let result: serde_json::Value = serde_json::from_str(text).expect("output must be valid JSON");
 
     assert_eq!(result["name"], "run");
@@ -212,7 +261,12 @@ fn mcp_locate_tool_returns_matches() {
     assert_eq!(matches.len(), 1);
     assert_eq!(matches[0]["name"], "run");
     assert_eq!(matches[0]["entity_type"], "Function");
-    assert!(matches[0]["entity_path"].as_str().unwrap().ends_with("> run"));
+    assert!(
+        matches[0]["entity_path"]
+            .as_str()
+            .unwrap()
+            .ends_with("> run")
+    );
 
     std::fs::remove_dir_all(&dir).unwrap();
 }

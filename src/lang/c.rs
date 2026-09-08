@@ -3,12 +3,28 @@ use tree_sitter::Node;
 use super::{Context, LocMap, c_family, leaf_entity, name_field};
 use crate::model::{Entity, EntityType};
 
-pub(super) fn parse_node(node: Node<'_>, source: &str, loc_map: &LocMap, context: Context, depth: usize) -> Option<Entity> {
+pub(super) fn parse_node(
+    node: Node<'_>,
+    source: &str,
+    loc_map: &LocMap,
+    context: Context,
+    depth: usize,
+) -> Option<Entity> {
     let src = source.as_bytes();
     match node.kind() {
         "function_definition" => c_family::function_entity(node, source, loc_map, context),
-        "struct_specifier" => Some(leaf_entity(node, name_field(node, src)?, EntityType::Struct, loc_map)),
-        "enum_specifier" => Some(leaf_entity(node, name_field(node, src)?, EntityType::Enum, loc_map)),
+        "struct_specifier" => Some(leaf_entity(
+            node,
+            name_field(node, src)?,
+            EntityType::Struct,
+            loc_map,
+        )),
+        "enum_specifier" => Some(leaf_entity(
+            node,
+            name_field(node, src)?,
+            EntityType::Enum,
+            loc_map,
+        )),
         "declaration" | "type_definition" => c_family::unwrap_declaration(
             node,
             source,
@@ -27,8 +43,12 @@ mod tests {
     use super::*;
     use crate::model::{DependencyKind, EntityType};
 
-    fn parse(src: &str) -> Vec<Entity> { crate::lang::test_parse("C", src).entities }
-    fn imports(src: &str) -> Vec<String> { crate::lang::test_parse("C", src).imports }
+    fn parse(src: &str) -> Vec<Entity> {
+        crate::lang::test_parse("C", src).entities
+    }
+    fn imports(src: &str) -> Vec<String> {
+        crate::lang::test_parse("C", src).imports
+    }
 
     #[test]
     fn parses_function() {

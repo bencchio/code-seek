@@ -8,19 +8,19 @@ LOC. Historical snapshots for tracking code evolution are planned (post-0.6.x).
 
 ## Status
 
-**Current release: v0.5.0** (2026-07-14)
+**Current release: v0.5.3** (2026-09-08)
 
 Implemented:
 - `Cargo.toml` scaffold (edition 2024, clap 4)
-- `code-seek init [--force]`: creates `.code-seek/config.toml` with `ignore_dirs` defaults
-- File walker: recursive, ignores `.git/`, `.code-seek/`, and `ignore_dirs` from config; returns only supported extensions; respects `follow_symlinks` (default: false) and `max_file_size_mb` (default: 10)
-- `code-seek scan <path> [--lang LANG] [--format FORMAT] [--match PATTERN] [--max-depth N] [--ignore DIRS] [--info FILTER]`: multi-language parsing (C, C++, Go, JavaScript, Python, Rust, TypeScript, QML), entity tree with LOC and line numbers, Nerd Font icons, `--lang` filter, `--format json` for structured output, `--match`/`--max-depth` entity filters, `--ignore` directory exclusion, `--info` test-module filter
+- `code-seek init [--force]`: creates `config.toml` in the XDG slot with `ignore_dirs` defaults
+- File walker: recursive, ignores `.git/`, leftover `.code-seek/`, and `ignore_dirs` from config; returns only supported extensions; respects `follow_symlinks` (default: false) and `max_file_size_mb` (default: 10)
+- `code-seek scan <path> [--lang LANG] [--format FORMAT] [--match PATTERN] [--max-depth N] [--ignore DIRS] [--info FILTER] [--no-gitignore]`: multi-language parsing (C, C++, Elixir, Go, JavaScript, Python, Rust, TypeScript, QML), entity tree with LOC and line numbers, Nerd Font icons, `--lang` filter, `--format json` for structured output, `--match`/`--max-depth` entity filters, `--ignore` directory exclusion, `--info` test-module filter, `.gitignore` honored by default
 - Entity model: 8 types (Class, Enum, Function, Impl, Method, Namespace, Struct, Trait)
 - Entity paths: canonical unique identifier (`file > [parent >]* name`) included in JSON output; impl/trait/mod containers use prefixed segments
 - LOC counting: pre-computed prefix-sum per file (O(n) build, O(1) per entity); skips blank lines and comments (single-line and block)
 - Error reporting: oversized files and unreadable files emit warnings to stderr and are skipped; scan never panics
 - `code-seek mcp`: MCP server over stdio with 4 tools — `scan`, `entity`, `summary`, `locate`
-- SHA256 incremental cache (`.code-seek/cache.json`): unchanged files are not re-parsed
+- SHA256 incremental cache (`cache.json` in the XDG slot): unchanged files are not re-parsed
 - Import detection: `imports` field in JSON output per file — `#include` (C/C++), `use`/`extern crate` (Rust), `import` (QML), ES `import` (JavaScript/TypeScript), `import`/`from … import` (Python)
 - Dependency graph: JSON output includes `dependencies` array per file with `name` + `kind` (`internal`/`external`); tree output shows dependency counts
 - Syntax error detection: JSON output includes `errors` array per file with `{kind, node_kind, start_line, end_line}` and `total_errors` top-level count; tree output shows error count in file header
@@ -30,7 +30,7 @@ Implemented:
 
 - **Rust**: implementation language.
 - **Tree-sitter**: multi-language parsing (never crashes, detects syntax errors).
-- **TOML**: configuration format (`.code-seek/config.toml`).
+- **TOML**: configuration format (`config.toml` in the XDG slot).
 - **SHA-256**: incremental cache to skip re-parsing unchanged files.
 - **JSON-RPC 2.0**: MCP protocol for AI agent consumption.
 - **Single binary**: no Python, Node.js, or Java runtime dependencies.
@@ -39,16 +39,16 @@ Implemented:
 
 Every detected entity maps to a canonical type, regardless of language:
 
-| EntityType  | Description                      | C/C++     | Rust   | JS/TS               | Python | QML      |
-|-------------|----------------------------------|-----------|--------|---------------------|--------|----------|
-| `Function`  | Top-level function               | function  | fn     | function / arrow fn | def    | —        |
-| `Method`    | Method inside class/impl/trait   | method    | fn     | method              | def    | function |
-| `Class`     | Class or QML object              | class     | —      | class               | class  | object   |
-| `Struct`    | Structure                        | struct    | struct | —                   | —      | —        |
-| `Trait`     | Trait / interface                | —         | trait  | interface (TS)      | —      | —        |
-| `Impl`      | Impl block                       | —         | impl   | —                   | —      | —        |
-| `Enum`      | Enumeration                      | enum      | enum   | enum (TS)           | —      | —        |
-| `Namespace` | Module / namespace               | namespace | mod    | namespace (TS)      | —      | —        |
+| EntityType  | Description                      | C/C++     | Rust   | JS/TS               | Python | QML      | Elixir |
+|-------------|----------------------------------|-----------|--------|---------------------|--------|----------|--------|
+| `Function`  | Top-level function               | function  | fn     | function / arrow fn | def    | —        | def / defp / defmacro |
+| `Method`    | Method inside class/impl/trait   | method    | fn     | method              | def    | function | def inside protocol/impl |
+| `Class`     | Class or QML object              | class     | —      | class               | class  | object   | —      |
+| `Struct`    | Structure                        | struct    | struct | —                   | —      | —        | defstruct |
+| `Trait`     | Trait / interface                | —         | trait  | interface (TS)      | —      | —        | defprotocol |
+| `Impl`      | Impl block                       | —         | impl   | —                   | —      | —        | defimpl |
+| `Enum`      | Enumeration                      | enum      | enum   | enum (TS)           | —      | —        | —      |
+| `Namespace` | Module / namespace               | namespace | mod    | namespace (TS)      | —      | —        | defmodule |
 
 ### Entity attributes
 
@@ -64,9 +64,12 @@ Implemented (v0.2.2):
 
 - `entity_path`: unique canonical string (`path > [parent >]* name`); included in JSON output
 
-Planned (v0.3+):
+Implemented:
 
-- `kind`: language-specific variant string (e.g. `"struct"`, `"trait"`)
+- `kind`: language-specific variant string (empty omitted from JSON). Elixir uses `def`, `defp`, `defmacro`, `defmacrop`, `defmodule`, `defprotocol`, `defimpl`, `defstruct`.
+
+Planned:
+
 - `signature`: full declaration text (optional)
 
 ### Anonymous entities
@@ -102,10 +105,11 @@ src/main.qml > MainWindow > onButtonClick
 
 ## Supported Languages
 
-### v0.5.0 (current)
+### v0.5.3 (current)
 
 - C
 - C++
+- Elixir
 - Go
 - JavaScript
 - Python
@@ -119,12 +123,12 @@ src/main.qml > MainWindow > onButtonClick
 
 ## CLI Commands
 
-### v0.5.0 (current)
+### v0.5.3 (current)
 
 #### `code-seek init`
 
-Initialize a Code Seek project in the current directory.
-Creates `.code-seek/` with default `config.toml`.
+Initialize a Code Seek project for the current directory.
+Creates `config.toml` in `${XDG_STATE_HOME:-~/.local/state}/code-seek/<basename>/`.
 
 Flags:
 
@@ -148,12 +152,13 @@ Analyze a file or directory and print the structural tree or JSON.
 
 Flags:
 
-- `--lang <langs>`: filter by language; comma-separated for multiple (`--lang rust,cpp`). Supported values (any name or alias): `c`, `cpp`, `c++`, `go`, `golang`, `js`, `javascript`, `python`, `py`, `qml`, `rust`, `ts`, `typescript`.
+- `--lang <langs>`: filter by language; comma-separated for multiple (`--lang rust,cpp`). Supported values (any name or alias): `c`, `cpp`, `c++`, `elixir`, `ex`, `go`, `golang`, `js`, `javascript`, `python`, `py`, `qml`, `rust`, `ts`, `typescript`.
 - `--format <format>`: output format; `tree` (default) or `json`.
 - `--match <pattern>`: case-insensitive substring filter on entity name. Parents are preserved when a child matches. Files with zero matching entities still show their header.
 - `--max-depth <n>`: hard depth ceiling. `0` = file headers only, `1` = root entities, `2` = root + direct children. No flag = unlimited.
 - `--ignore <dirs>`: comma-separated directory names to skip during walk (combined with `ignore_dirs` from config).
 - `--info <filter>`: entity info filter. Values: `all` (default), `no-tests` (excludes `mod tests` entities), `tests-only` (shows only `mod tests` entities).
+- `--no-gitignore`: include files git is told to ignore. Off by default: inside a git repository, ignored files and directories never reach the output.
 
 Flags compose: `--max-depth` is applied first (hard ceiling), then `--match` filters within the resulting tree, then `--info` filters entities.
 
@@ -281,17 +286,18 @@ src/foo.rs > Point
 
 ### Walker
 
-The walker always ignores `.git/` and `.code-seek/` directories.
-Respects `ignore_dirs`, `follow_symlinks`, and `max_file_size_mb` from `.code-seek/config.toml`.
+The walker always ignores `.git/` and leftover `.code-seek/` directories.
+Respects `ignore_dirs`, `follow_symlinks`, and `max_file_size_mb` from the XDG slot's `config.toml`.
 The `--ignore` CLI flag adds extra directories to skip at runtime (combined with `ignore_dirs`).
-Returns only files with supported extensions (`.c`, `.h`, `.cpp`, `.cc`, `.cxx`, `.hpp`, `.hxx`, `.h++`, `.go`, `.js`, `.mjs`, `.cjs`, `.py`, `.pyw`, `.rs`, `.ts`, `.mts`, `.cts`, `.qml`).
+Inside a git repository the walker also skips whatever git would not show, asked once per scan via `git ls-files --cached --others --exclude-standard`; an ignored directory is pruned rather than descended into. A tracked file is never hidden, since `.gitignore` only governs untracked files. Outside a repository, or with git unavailable, nothing is filtered. `--no-gitignore` turns it off.
+Returns only files with supported extensions (`.c`, `.h`, `.cpp`, `.cc`, `.cxx`, `.hpp`, `.hxx`, `.h++`, `.ex`, `.exs`, `.go`, `.js`, `.mjs`, `.cjs`, `.py`, `.pyw`, `.rs`, `.ts`, `.mts`, `.cts`, `.qml`).
 Supports both directory and single-file paths.
 Unreadable directories and oversized files emit a warning to stderr and are skipped.
 Symlinks are not followed by default (`follow_symlinks = false`); a symlink root path is treated as 0 files.
 
 ## Configuration System
 
-File: `.code-seek/config.toml` — created by `code-seek init`.
+File: `config.toml` in the XDG slot — created by `code-seek init`.
 
 Fields implemented in v0.2.0:
 
@@ -336,7 +342,7 @@ File: `.code-seek/history.db`
 CREATE TABLE snapshots (
     id INTEGER PRIMARY KEY,
     timestamp TEXT NOT NULL,
-    code-seek_version TEXT NOT NULL,
+    code_seek_version TEXT NOT NULL,
     total_files INTEGER DEFAULT 0,
     total_loc INTEGER DEFAULT 0,
     total_entities INTEGER DEFAULT 0,
@@ -404,17 +410,18 @@ WHERE a.snapshot_id = 1 AND b.snapshot_id = 2
 ## Incremental Cache (v0.2.6)
 
 Each file is hashed with SHA-256 during scan and stored in
-`.code-seek/cache.json` alongside parsed entities. If the same file is scanned
+`cache.json` in the XDG slot alongside parsed entities. If the same file is scanned
 again with an identical hash, entities are loaded from cache instead of
 re-parsing.
 
 Cache behavior:
-- Cache stored at `.code-seek/cache.json` as compact JSON
+- Cache stored at the slot's `cache.json` as compact JSON
 - Keyed by relative file path; entry stores `sha256`, `language`, `loc`, `entities`
 - On miss or hash mismatch, the file is re-parsed and cache is updated
 - Cache is written only when at least one file was re-parsed (`cache_dirty` flag)
 - Missing or corrupt cache file is silently ignored (fresh start)
-- Missing `.code-seek/` directory skips cache write silently — no error
+- First scan creates the XDG slot so the cache can be written
+- If the slot cannot be resolved, cache write is skipped silently — no error
 
 ## Error Handling
 
@@ -451,4 +458,4 @@ Other handled errors:
   entry (grammar, import kinds, `parse_node`, `resolve_imports`); a single
   generic pipeline in `lang/mod.rs` drives parsing for all languages.
 - **SHA-256 cache**: incremental scanning avoids re-parsing unchanged files
-  (`.code-seek/cache.json`).
+  (XDG slot `cache.json`).
