@@ -1,0 +1,145 @@
+pub(crate) mod filter;
+pub(crate) mod render;
+
+pub(crate) use filter::{find_entity, locate, summarize};
+pub(crate) use render::results_to_json;
+
+use crate::{
+    cache, config, lang,
+    model::FileResult,
+    walker,
+};
+use std::collections::HashSet;
+use std::{fs, path::Path};
+
+pub(crate) fn run(
+    path: &Path,
+    lang_filter: &[String],
+    format: &str,
+    match_pattern: &str,
+    max_depth: Option<usize>,
+    extra_ignore: &[String],
+) -> Result<(), Box<dyn std::error::Error>> {
+    let results = build_scan_results(path, lang_filter, match_pattern, max_depth, extra_ignore)?;
+    match format {
+        "json" => render::print_json(&results, path)?,
+        _ => render::print_tree(&results),
+    }
+    Ok(())
+}
+
+pub(crate) fn build_scan_results(
+    path: &Path,
+    lang_filter: &[String],
+    match_pattern: &str,
+    max_depth: Option<usize>,
+    extra_ignore: &[String],
+) -> Result<Vec<FileResult>, Box<dyn std::error::Error>> {
+    if !path.exists() {
+        return Err(format!("'{}' does not exist", path.display()).into());
+    }
+    for lang in lang_filter {
+        let lower = lang.to_lowercase();
+        if !lang::LANGUAGES.iter().any(|l| l.aliases.contains(&lower.as_str())) {
+            return Err(format!("unrecognized language: '{lang}'").into());
+        }
+    }
+    let cfg = config::load();
+    let all_ignore: Vec<String> = cfg.scan.ignore_dirs.iter().cloned()
+        .chain(extra_ignore.iter().cloned())
+        .collect();
+    let files = walker::walk(path, &all_ignore, cfg.scan.follow_symlinks);
+    let cache_path = Path::new(".code-seek/cache.json");
+    let mut file_cache = cache::load(cache_path);
+    let mut cache_dirty = false;
+
+    let mut results: Vec<FileResult> = files
+        .iter()
+        .filter_map(|f| scan_one(f, &cfg, lang_filter, &mut file_cache, &mut cache_dirty))
+        .collect();
+
+    if cache_dirty {
+        file_cache.save(cache_path);
+    }
+    resolve_dependencies(&mut results);
+    apply_filters(&mut results, match_pattern, max_depth);
+    Ok(results)
+}
+
+fn scan_one(
+    file: &Path,
+    cfg: &config::Config,
+    lang_filter: &[String],
+    cache: &mut cache::Cache,
+    cache_dirty: &mut bool,
+) -> Option<FileResult> {
+    let language = lang::detect(file)?;
+    if !lang_matches(language, lang_filter) {
+        return None;
+    }
+    if let Ok(meta) = fs::metadata(file) {
+        let size_mb = meta.len() as f64 / (1024.0 * 1024.0);
+        if size_mb > cfg.scan.max_file_size_mb {
+            crate::log::warn(&format!(
+                "skipping '{}' ({:.1} MB exceeds {:.0} MB limit)",
+                file.display(),
+                size_mb,
+                cfg.scan.max_file_size_mb,
+            ));
+            return None;
+        }
+    }
+    let source = match fs::read_to_string(file) {
+        Ok(s) => s,
+        Err(e) => {
+            crate::log::warn(&format!("skipping '{}': {}", file.display(), e));
+            return None;
+        }
+    };
+    let key = file.display().to_string();
+    let sha = cache::sha256(&source);
+    if let Some(cached) = cache.get(&key, &sha) {
+        return Some(cached);
+    }
+    let result = lang::parse_file(file, &source, language);
+    cache.insert(key, &result, sha);
+    *cache_dirty = true;
+    Some(result)
+}
+
+fn apply_filters(results: &mut [FileResult], pattern: &str, max_depth: Option<usize>) {
+    let pattern = pattern.to_lowercase();
+    if pattern.is_empty() && max_depth.is_none() {
+        return;
+    }
+    for result in results.iter_mut() {
+        let entities = std::mem::take(&mut result.entities);
+        result.entities = filter::filter_entities(entities, &pattern, max_depth, 0);
+    }
+}
+
+fn resolve_dependencies(results: &mut [FileResult]) {
+    let project_files: HashSet<std::path::PathBuf> =
+        results.iter().map(|r| r.path.clone()).collect();
+    for r in results.iter_mut() {
+        let deps = lang::resolve_imports(r.language, &r.imports, &project_files);
+        let verified = lang::verify_internal_deps(&deps, &project_files);
+        r.dependencies = verified;
+    }
+}
+
+fn lang_matches(language: &str, filter: &[String]) -> bool {
+    if filter.is_empty() {
+        return true;
+    }
+    lang::LANGUAGES
+        .iter()
+        .find(|l| l.canonical == language)
+        .map(|l| {
+            filter.iter().any(|f| {
+                let lower = f.to_lowercase();
+                l.aliases.iter().any(|&a| a == lower)
+            })
+        })
+        .unwrap_or(false)
+}

@@ -1,13 +1,22 @@
+use std::path::Path;
+
 use tree_sitter::Node;
 
-use super::{LocMap, collect_children, node_lines, parse_source};
-use crate::model::{Entity, EntityType};
+use super::{LocMap, collect_children, detect_syntax_errors, extract_imports_from_tree, node_lines, parse_source};
+use crate::model::{Dependency, DependencyKind, Entity, EntityType, SyntaxError};
 
-pub(super) fn parse_impl(source: &str, loc_map: &LocMap) -> Vec<Entity> {
+pub(super) fn parse_all(source: &str, loc_map: &LocMap) -> (Vec<Entity>, Vec<String>, Vec<SyntaxError>) {
     let Some(tree) = parse_source(tree_sitter_rust::LANGUAGE.into(), source) else {
-        return Vec::new();
+        return (vec![], vec![], vec![]);
     };
-    collect_children(tree.root_node(), source, loc_map, false, 0, parse_node)
+    let entities = collect_children(tree.root_node(), source, loc_map, false, 0, parse_node);
+    let imports = extract_imports_from_tree(
+        &tree,
+        source,
+        &["use_declaration", "extern_crate_declaration"],
+    );
+    let errors = detect_syntax_errors(&tree);
+    (entities, imports, errors)
 }
 
 fn parse_node(
@@ -123,6 +132,60 @@ fn parse_node(
     }
 }
 
+fn first_crate_segment(import: &str) -> Option<String> {
+    let s = import
+        .trim_start_matches("use ")
+        .trim_start_matches("extern crate ")
+        .trim()
+        .split([':', ' ', ';'])
+        .next()?
+        .to_owned();
+    if s.is_empty() { None } else { Some(s) }
+}
+
+fn is_std_crate(crate_name: &str) -> bool {
+    matches!(crate_name, "std" | "core" | "alloc" | "proc_macro" | "test")
+}
+
+pub(super) fn resolve_imports(
+    imports: &[String],
+    project_files: &std::collections::HashSet<std::path::PathBuf>,
+) -> Vec<Dependency> {
+    imports
+        .iter()
+        .filter_map(|raw| {
+            let raw = raw.trim();
+            if raw.starts_with("use crate::") {
+                Some(Dependency {
+                    name: raw
+                        .trim_start_matches("use ")
+                        .trim_start_matches("extern crate ")
+                        .trim_end_matches(';')
+                        .to_owned(),
+                    kind: DependencyKind::Internal,
+                })
+            } else if let Some(crate_name) = first_crate_segment(raw) {
+                let kind = if is_std_crate(&crate_name) {
+                    DependencyKind::External
+                } else if raw.starts_with("use ") || raw.starts_with("extern crate ") {
+                    let candidate_rs = Path::new("src").join(format!("{crate_name}.rs"));
+                    let candidate_mod = Path::new("src").join(&crate_name).join("mod.rs");
+                    if project_files.iter().any(|p| p.ends_with(&candidate_rs) || p.ends_with(&candidate_mod)) {
+                        DependencyKind::Internal
+                    } else {
+                        DependencyKind::External
+                    }
+                } else {
+                    DependencyKind::External
+                };
+                Some(Dependency { name: crate_name, kind })
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
 fn impl_target_type(node: Node<'_>, src: &[u8]) -> Option<String> {
     extract_type_name(node.child_by_field_name("type")?, src)
 }
@@ -146,9 +209,8 @@ mod tests {
     use super::*;
     use crate::model::EntityType;
 
-    fn parse(src: &str) -> Vec<Entity> {
-        parse_impl(src, &LocMap::build(src))
-    }
+    fn parse(src: &str) -> Vec<Entity> { parse_all(src, &LocMap::build(src)).0 }
+    fn imports(src: &str) -> Vec<String> { parse_all(src, &LocMap::build(src)).1 }
 
     #[test]
     fn parses_function() {
@@ -256,5 +318,53 @@ mod tests {
         assert_eq!(entities[0].name, "alpha");
         assert_eq!(entities[1].name, "mid");
         assert_eq!(entities[2].name, "zoo");
+    }
+
+    #[test]
+    fn extracts_use_declarations() {
+        let src = "use std::collections::HashMap;\nuse serde::Serialize;\nfn main() {}";
+        let result = imports(src);
+        assert_eq!(result.len(), 2);
+        assert!(result[0].contains("HashMap"));
+        assert!(result[1].contains("serde"));
+    }
+
+    #[test]
+    fn extracts_extern_crate() {
+        let src = "extern crate serde;\nfn main() {}";
+        let result = imports(src);
+        assert_eq!(result.len(), 1);
+        assert!(result[0].contains("serde"));
+    }
+
+    #[test]
+    fn resolves_use_declarations() {
+        let imports = vec![
+            "use std::collections::HashMap;".into(),
+            "use crate::util::helper;".into(),
+            "use serde::Serialize;".into(),
+        ];
+        let project = std::collections::HashSet::from([
+            std::path::PathBuf::from("src/util.rs"),
+            std::path::PathBuf::from("src/main.rs"),
+        ]);
+        let deps = resolve_imports(&imports, &project);
+        assert_eq!(deps.len(), 3);
+        assert_eq!(deps[0].name, "std");
+        assert_eq!(deps[0].kind, DependencyKind::External);
+        assert_eq!(deps[1].name, "crate::util::helper");
+        assert_eq!(deps[1].kind, DependencyKind::Internal);
+        assert_eq!(deps[2].name, "serde");
+        assert_eq!(deps[2].kind, DependencyKind::External);
+    }
+
+    #[test]
+    fn resolves_extern_crate() {
+        let imports = vec!["extern crate serde;".into()];
+        let project = std::collections::HashSet::new();
+        let deps = resolve_imports(&imports, &project);
+        assert_eq!(deps.len(), 1);
+        assert_eq!(deps[0].name, "serde");
+        assert_eq!(deps[0].kind, DependencyKind::External);
     }
 }

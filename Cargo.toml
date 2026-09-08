@@ -1,6 +1,6 @@
 [package]
 name = "code-seek"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 
 [dependencies]
@@ -14,3 +14,6 @@ tree-sitter-c = "0.24"
 tree-sitter-cpp = "0.23"
 tree-sitter-qmljs = "0.3"
 tree-sitter-rust = "0.24"
+
+[dev-dependencies]
+tree-sitter = "0.25"

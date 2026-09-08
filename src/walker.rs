@@ -14,7 +14,7 @@ pub(crate) fn walk(root: &Path, ignore_dirs: &[String], follow_symlinks: bool) -
         }
         return Vec::new();
     }
-    let mut files = Vec::new();
+    let mut files = Vec::with_capacity(256);
     walk_dir(root, &mut files, ignore_dirs, follow_symlinks);
     files.sort();
     files
@@ -113,6 +113,30 @@ mod tests {
         assert_eq!(files.len(), 1);
         assert!(files[0].file_name().unwrap() == "main.rs");
 
+        fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    #[test]
+    fn empty_directory_returns_empty() {
+        let tmp = std::env::temp_dir().join("code_seek_walker_empty");
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(&tmp).unwrap();
+        let files = walk(&tmp, &[], false);
+        assert_eq!(files.len(), 0);
+        fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    #[test]
+    fn ignore_dirs_case_sensitive() {
+        let tmp = std::env::temp_dir().join("code_seek_walker_case");
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(tmp.join("Target")).unwrap();
+        fs::create_dir_all(tmp.join("target")).unwrap();
+        fs::write(tmp.join("Target/main.rs"), b"fn main() {}").unwrap();
+        fs::write(tmp.join("target/build.rs"), b"fn main() {}").unwrap();
+        let files = walk(&tmp, &["target".to_owned()], false);
+        assert_eq!(files.len(), 1);
+        assert!(files[0].to_str().unwrap().contains("Target"));
         fs::remove_dir_all(&tmp).unwrap();
     }
 

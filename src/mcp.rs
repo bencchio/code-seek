@@ -109,9 +109,14 @@ fn handle_scan(id: Value, args: &Value) -> Value {
         .unwrap_or_default();
     let match_pattern = args.get("match").and_then(|m| m.as_str()).unwrap_or("");
     let max_depth = args.get("max_depth").and_then(|d| d.as_u64()).map(|d| d as usize);
+    let extra_ignore: Vec<String> = args
+        .get("ignore")
+        .and_then(|i| i.as_str())
+        .map(|s| s.split(',').map(str::trim).map(str::to_owned).collect())
+        .unwrap_or_default();
     let path = std::path::Path::new(path_str);
 
-    match scan::build_scan_results(path, &lang_filter, match_pattern, max_depth) {
+    match scan::build_scan_results(path, &lang_filter, match_pattern, max_depth, &extra_ignore) {
         Ok(results) => {
             let text = serde_json::to_string(&scan::results_to_json(&results, path)).unwrap_or_default();
             json!({"jsonrpc": "2.0", "id": id, "result": {"content": [{"type": "text", "text": text}]}})
@@ -140,7 +145,7 @@ fn handle_entity(id: Value, args: &Value) -> Value {
     }
     let path = std::path::Path::new(file_path);
 
-    match scan::build_scan_results(path, &[], "", None) {
+    match scan::build_scan_results(path, &[], "", None, &[]) {
         Ok(results) => match scan::find_entity(&results, entity_path) {
             Some(v) => {
                 let text = serde_json::to_string(&v).unwrap_or_default();
@@ -176,7 +181,7 @@ fn handle_summary(id: Value, args: &Value) -> Value {
         .unwrap_or_default();
     let path = std::path::Path::new(path_str);
 
-    match scan::build_scan_results(path, &lang_filter, "", None) {
+    match scan::build_scan_results(path, &lang_filter, "", None, &[]) {
         Ok(results) => {
             let text = serde_json::to_string(&scan::summarize(&results, path)).unwrap_or_default();
             json!({"jsonrpc": "2.0", "id": id, "result": {"content": [{"type": "text", "text": text}]}})
@@ -212,7 +217,7 @@ fn handle_locate(id: Value, args: &Value) -> Value {
         .unwrap_or_default();
     let path = std::path::Path::new(path_str);
 
-    match scan::build_scan_results(path, &lang_filter, "", None) {
+    match scan::build_scan_results(path, &lang_filter, "", None, &[]) {
         Ok(results) => {
             let matches = scan::locate(&results, name);
             let text = serde_json::to_string(&serde_json::json!({
@@ -251,6 +256,10 @@ fn scan_tool_def() -> Value {
                 "max_depth": {
                     "type": "integer",
                     "description": "Hard depth ceiling: 0 = file headers only, 1 = root entities, 2 = roots + direct children"
+                },
+                "ignore": {
+                    "type": "string",
+                    "description": "Comma-separated directory names to skip (e.g. \"target,node_modules\")"
                 }
             },
             "required": ["path"]

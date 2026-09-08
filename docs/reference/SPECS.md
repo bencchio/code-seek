@@ -8,19 +8,23 @@ LOC, and stores historical snapshots for tracking code evolution.
 
 ## Status
 
-**Current release: v0.2.7** (2026-07-01)
+**Current release: v0.3.4** (2026-07-02)
 
 Implemented:
 - `Cargo.toml` scaffold (edition 2024, clap 4)
 - `code-seek init [--force]`: creates `.code-seek/config.toml` with `ignore_dirs` defaults
 - File walker: recursive, ignores `.git/`, `.code-seek/`, and `ignore_dirs` from config; returns only supported extensions; respects `follow_symlinks` (default: false) and `max_file_size_mb` (default: 10)
-- `code-seek scan <path> [--lang LANG] [--format FORMAT] [--match PATTERN] [--max-depth N]`: multi-language parsing (C, C++, Rust, QML), entity tree with LOC and line numbers, Nerd Font icons, `--lang` filter, `--format json` for structured output, `--match`/`--max-depth` entity filters
+- `code-seek scan <path> [--lang LANG] [--format FORMAT] [--match PATTERN] [--max-depth N] [--ignore DIRS]`: multi-language parsing (C, C++, Rust, QML), entity tree with LOC and line numbers, Nerd Font icons, `--lang` filter, `--format json` for structured output, `--match`/`--max-depth` entity filters, `--ignore` directory exclusion
 - Entity model: 8 types (Class, Enum, Function, Impl, Method, Namespace, Struct, Trait)
 - Entity paths: canonical unique identifier (`file > [parent >]* name`) included in JSON output; impl/trait/mod containers use prefixed segments
 - LOC counting: pre-computed prefix-sum per file (O(n) build, O(1) per entity); skips blank lines and comments (single-line and block)
 - Error reporting: oversized files and unreadable files emit warnings to stderr and are skipped; scan never panics
 - `code-seek mcp`: MCP server over stdio with 4 tools — `scan`, `entity`, `summary`, `locate`
 - SHA256 incremental cache (`.code-seek/cache.json`): unchanged files are not re-parsed
+- Import detection: `imports` field in JSON output per file — `#include` (C/C++), `use`/`extern crate` (Rust), `import` (QML)
+- Dependency graph: JSON output includes `dependencies` array per file with `name` + `kind` (`internal`/`external`); tree output shows dependency counts
+- Syntax error detection: JSON output includes `errors` array per file with `{kind, node_kind, start_line, end_line}` and `total_errors` top-level count; tree output shows error count in file header
+- `--ignore <dirs>` CLI flag: comma-separated directory names to exclude from walk (combined with `ignore_dirs` from config)
 
 ## Technology Stack
 
@@ -98,7 +102,7 @@ src/main.qml > MainWindow > onButtonClick
 
 ## Supported Languages
 
-### v0.2.3 (current)
+### v0.3.4 (current)
 
 - C
 - C++
@@ -113,7 +117,7 @@ src/main.qml > MainWindow > onButtonClick
 
 ## CLI Commands
 
-### v0.2.7 (current)
+### v0.3.4 (current)
 
 #### `code-seek init`
 
@@ -146,10 +150,11 @@ Flags:
 - `--format <format>`: output format; `tree` (default) or `json`.
 - `--match <pattern>`: case-insensitive substring filter on entity name. Parents are preserved when a child matches. Files with zero matching entities still show their header.
 - `--max-depth <n>`: hard depth ceiling. `0` = file headers only, `1` = root entities, `2` = root + direct children. No flag = unlimited.
+- `--ignore <dirs>`: comma-separated directory names to skip during walk (combined with `ignore_dirs` from config).
 
 Flags compose: `--max-depth` is applied first (hard ceiling), then `--match` filters within the resulting tree.
 
-### v0.4.x (planned)
+### post-0.5.x (planned)
 
 #### `code-seek config get [key]`
 #### `code-seek config set <key> <value>`
@@ -169,14 +174,14 @@ Flags compose: `--max-depth` is applied first (hard ceiling), then `--match` fil
 
 ```
 󱘗 src/config.rs  [Rust]                              19 LOC  3 entities
-├─ 󰠱 Config                                           3 LOC  [  6-  8]
-├─ 󰠱 ScanConfig                                       3 LOC  [ 12- 14]
-└─ 󰊕 load                                             7 LOC  [ 16- 22]
+├─ 󰠱 Config                                           3 LOC  [  6-  8]  ✓
+├─ 󰠱 ScanConfig                                       3 LOC  [ 12- 14]  ✓
+└─ 󰊕 load                                             7 LOC  [ 16- 22]  ✓
 
-󱘗 src/main.rs  [Rust]                                38 LOC  3 entities
-├─ 󰠱 Cli                                              4 LOC  [ 14- 17]
-├─ 󰒻 Command                                         11 LOC  [ 20- 30]
-└─ 󰊕 main                                            11 LOC  [ 32- 42]
+󱘗 src/main.rs  [Rust]                                38 LOC  3 entities  1 error
+├─ 󰠱 Cli                                              4 LOC  [ 14- 17]  ✓
+├─ 󰒻 Command                                         11 LOC  [ 20- 30]  ⚠
+└─ 󰊕 main                                            11 LOC  [ 32- 42]  ✓
 
 2 files  6 entities
 ```
@@ -184,8 +189,8 @@ Flags compose: `--max-depth` is applied first (hard ceiling), then `--match` fil
 Line format:
 
 ```
-<language-icon> <file-path>  [<language>]  <LOC> LOC  <entity-count> entity/entities
-<tree-connector> <entity-icon> <name>  <LOC> LOC  [<start-line>-<end-line>]
+<language-icon> <file-path>  [<language>]  <LOC> LOC  <entity-count> entity/entities[  <dep-counts>][  <error-count>]
+<tree-connector> <entity-icon> <name>  <LOC> LOC  [<start-line>-<end-line>]  ✓|⚠
 ```
 
 Rules:
@@ -217,6 +222,7 @@ Top-level schema:
   "total_files": 2,
   "total_loc": 66,
   "total_entities": 7,
+  "total_errors": 1,
   "files": [ ... ]
 }
 ```
@@ -229,6 +235,9 @@ Per-file entry:
   "language": "Rust",
   "loc": 28,
   "entity_count": 3,
+  "imports": ["use std::path::Path"],
+  "dependencies": [{"name": "serde", "kind": "external"}],
+  "errors": [{"kind": "error", "node_kind": "ERROR", "start_line": 12, "end_line": 12}],
   "entities": [ ... ]
 }
 ```
@@ -267,9 +276,11 @@ src/foo.rs > Point
 
 The walker always ignores `.git/` and `.code-seek/` directories.
 Respects `ignore_dirs`, `follow_symlinks`, and `max_file_size_mb` from `.code-seek/config.toml`.
+The `--ignore` CLI flag adds extra directories to skip at runtime (combined with `ignore_dirs`).
 Returns only files with supported extensions (`.c`, `.h`, `.cpp`, `.cc`, `.cxx`, `.hpp`, `.hxx`, `.rs`, `.qml`).
 Supports both directory and single-file paths.
 Unreadable directories and oversized files emit a warning to stderr and are skipped.
+Symlinks are not followed by default (`follow_symlinks = false`); a symlink root path is treated as 0 files.
 
 ## Configuration System
 
@@ -286,9 +297,9 @@ max_file_size_mb = 10        # skip files larger than this
 ignore_dirs = ["target", "node_modules", ...]
 ```
 
-CLI commands for reading/writing config (`config get/set/list`) are planned for v0.4.2.
+CLI commands for reading/writing config (`config get/set/list`) are planned for post-0.5.x.
 
-## Ignore System (v0.4.3)
+## Ignore System (post-0.5.x)
 
 File: `.code-seek/checkignore`
 
@@ -411,26 +422,21 @@ Other handled errors:
 
 ## Future
 
-### v0.3.x — Dependencies & robustness
+### v0.4.x — Language expansion
 
-- Import/include/use/require detection (C, C++, Rust, QML)
-- Dependency graph in JSON output (internal vs external)
-- Syntax error detection (ERROR/MISSING nodes in output)
-- MCP progress tokens (`$/progress`) and client cancellation signal
-- Stabilization (v0.3.99) / Release (v0.4.0)
+- Python parser
+- JavaScript parser
+- TypeScript parser
+- Go parser
+- Unify C/C++ parsers (factor duplicated `parse_node` logic into shared base)
 
-### v0.4.x — Configuration & integration
+### Post-0.5.x
 
-- Config system (`config get/set/list`)
+- Config CLI (`config get/set/list`)
 - Ignore system (`checkignore` patterns)
 - `--format ndjson` streaming output
 - `--filter "loc > N"` attribute expressions
 - Git-aware diff (`code-seek diff --from HEAD~1`)
-
-### Post-0.4.x
-
-- Unify C/C++ parsers (factor duplicated `parse_node` logic)
-- Python, JavaScript, TypeScript parsers
 - SQLite history (`scan --save`, `history list/show/diff`)
 - Markdown export
 - Structure visualizer (standalone, consumes JSON)

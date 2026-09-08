@@ -40,6 +40,8 @@ enum Command {
         filter_match: Option<String>,
         #[arg(long, value_name = "N")]
         max_depth: Option<usize>,
+        #[arg(long, value_delimiter = ',', value_name = "DIR")]
+        ignore: Vec<String>,
     },
 }
 
@@ -48,8 +50,8 @@ fn main() {
     let result = match cli.command {
         Command::Init { force } => init::run(force),
         Command::Mcp => mcp::run(),
-        Command::Scan { path, lang, format, filter_match, max_depth } => {
-            scan::run(&path, &lang, &format, filter_match.as_deref().unwrap_or(""), max_depth)
+        Command::Scan { path, lang, format, filter_match, max_depth, ignore } => {
+            scan::run(&path, &lang, &format, filter_match.as_deref().unwrap_or(""), max_depth, &ignore)
         }
     };
     if let Err(e) = result {

@@ -2,10 +2,92 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.4.0] — 2026-07-02
+
+Release — closes 0.3.x cycle (Dependencies & robustness). First public
+release candidate. All planned features for 0.3.x are complete: entity
+tree with JSON output, multi-language parsing (C, C++, Rust, QML), import
+detection, dependency graph, syntax error detection, SHA-256 cache,
+MCP server with 4 tools (scan, entity, summary, locate), `--ignore` flag,
+language validation, and CLI filters (`--lang`, `--match`, `--max-depth`).
+
+## [0.3.4] — 2026-07-02
+
+### Added
+- `--ignore <dirs>` CLI flag: comma-separated directory names to skip during walk, combined with `ignore_dirs` from config (e.g. `code-seek scan . --ignore target,node_modules`)
+- MCP `scan` tool: optional `ignore` parameter (comma-separated directory names)
+- 9 unit tests covering core modules: `cache` (load corrupt/missing/empty), `model` (`SyntaxError` fields, `FileResult` fields), `lang/detect` (path without extension, empty extension), `walker` (empty directory, case-sensitive ignore)
+- 5 integration tests: `scan_with_ignore_flag_skips_dirs`, `scan_empty_rs_file`, `scan_only_comments_rs`, `scan_invalid_lang_cli`, `scan_symlink_root_no_follow`
+
+### Changed
+- `lang/mod.rs::parse_source`: replaced `.expect()` with `.ok()?` — eliminates the last potential panic in production code paths
+- Visibility narrowed to `pub(super)`: `print_tree`, `print_json`, `json_entities`, `entity_path_segment`, `entity_type_str`, `count_entities` (in `render.rs`); `filter_entities` (in `filter.rs`)
+- `build_scan_results` now validates the `--lang` filter and returns a clear error for unrecognized languages (e.g. `--lang python`)
+
+## [0.3.3] — 2026-07-02
+
+### Added
+- Syntax error detection: `errors` field in JSON output per file — list of `{kind, node_kind, start_line, end_line}` objects; `kind` is `"error"` (ERROR node) or `"missing"` (MISSING node)
+- `total_errors` top-level field in JSON output — sum across all files
+- `lang::detect_syntax_errors(tree)`: shared helper that walks the tree-sitter AST for ERROR/MISSING nodes; does not recurse into children of ERROR nodes to avoid duplicate reporting
+- Tree output shows error count in file header when errors are present (`1 error`, `2 errors`)
+- Tree output shows `✓` or `⚠` after `[start-end]` on every entity line — `⚠` when any syntax error overlaps the entity's line range, `✓` otherwise
+- Cache stores and restores `errors` per file (unlike `dependencies`, errors are not recomputed post-cache)
+- 2 unit tests: `detect_error_node` (Rust invalid expression), `detect_missing_node` (C missing semicolon)
+- 1 integration test: `scan_json_includes_errors_field` — verifies `errors` array, all fields, `total_errors`, and tree output
+
+### Changed
+- `ParseAll` type alias changed from pair to triple: `fn(&str, &LocMap) -> (Vec<Entity>, Vec<String>, Vec<SyntaxError>)`
+- All four parsers (`c`, `cpp`, `rust`, `qml`) updated to return the triple
+
+## [0.3.2] — 2026-07-02
+
+### Added
+- Dependency graph: JSON output per file includes `dependencies` array with `name` + `kind` (`internal`/`external`) — `#include <>` (C/C++), `use extern crate`/`use crate` (Rust), `import <Module>`/`import "./path"` (QML)
+- Cross-reference resolution: quoted includes (`#include "file.h"`) and ambiguous Rust imports (`use serde::Serialize`) are checked against actual project files to determine internal vs external
+- Cache stores resolved dependencies; internal deps are re-verified on cache load against current project file set
+- Tree output shows dependency counts per file (`2 ext  1 int deps`)
+- 4 unit tests for per-language import resolution (1 per language)
+- 1 integration test: `scan_json_includes_dependencies_field` — verifies `dependencies` in both JSON and tree output
+
+### Changed
+- `model::FileResult` now includes `dependencies: Vec<Dependency>`
+- `model::DependencyKind` (enum: `Internal`, `External`) and `model::Dependency` (name + kind)
+- `cache::CachedEntry` stores `dependencies`; `cache::get`/`insert` updated
+- `lang/mod.rs`: added `resolve_imports(language, imports, project_files)` dispatch and `verify_internal_deps(deps, project_files)` post-processing
+- `scan/mod.rs::build_scan_results`: resolves dependencies against `HashSet<PathBuf>` of all scanned files
+- `scan/render.rs`: JSON includes `dependencies` per file; tree output appends dep counts to file header
+
+## [0.3.1] — 2026-07-02
+
+### Added
+- Import detection: each file in JSON output now includes an `imports` array with `#include` (C/C++), `use`/`extern crate` (Rust), and `import` (QML) declarations
+- `lang::extract_imports_from_tree(tree, source, kinds)`: shared helper that walks a pre-built tree-sitter AST for import-like nodes — no parser created
+- `lang::{c,cpp,rust,qml}::parse_all(source, loc_map) -> (Vec<Entity>, Vec<String>)`: each parser builds the AST once and returns entities and imports together, eliminating the previous double-parse per file
+- `scan::scan_one`: per-file processing extracted from `build_scan_results` (detect, filter, size check, read, cache lookup, parse)
+- `scan::apply_filters`: entity filter step extracted from `build_scan_results`
+- `lang/loc.rs`: `LocMap` extracted to its own module
+- 9 unit tests for import extraction (2 per language + Rust extern crate)
+- 1 integration test: `scan_json_includes_imports_field` verifies `imports` field in JSON output
+- Cache now stores and restores `imports` per file
+
+### Changed
+- `src/scan.rs` split into `src/scan/mod.rs` (orchestrator), `src/scan/render.rs` (tree/JSON output), `src/scan/filter.rs` (entity filtering, locate, summarize)
+- `FileResult` now includes `imports: Vec<String>`
+- `LangDef.parse_all` replaces the former `parser` + `imports` function pointer pair
+- `model::FileResult` updated with `imports` field
+- `CachedEntry` updated with `imports` field
+- `parse_source`, `collect_children`, `node_lines`, `declarator_name`, `extract_imports_from_tree` narrowed from `pub(crate)` to `pub(super)` — internal to the `lang` module
+
 ## [0.3.0] — 2026-07-02
 
 ### Changed
-- Parser helpers shared across languages; docs moved under reference, rules, and design.
+- Removed `LanguageParser` trait and per-language parser structs (`CParser`, `CppParser`, `QmlParser`, `RustParser`); replaced with `parse_impl` free functions per language
+- Construct `LocMap` once in `parse_file` and pass to all parsers (was built independently per-parser)
+- Added depth limit (max 64) to `collect_children` to prevent stack overflow on deeply nested code
+- Reorganized docs into subdirectories: `rules/`, `design/`, `reference/`, `temp/`
+- Moved SPECS.md → `docs/reference/`, MCP.md → `docs/rules/`
+- Created `docs/CHANGELOG.md`, `docs/design/`, `docs/RELEASE-PROCESS.md`
 
 ## [0.2.7] — 2026-07-01
 

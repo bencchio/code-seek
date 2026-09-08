@@ -1,20 +1,25 @@
 use std::path::Path;
 
-use tree_sitter::{Language, Node, Parser};
+use tree_sitter::{Node, Parser};
 
-use crate::model::{Entity, FileResult};
+use crate::model::{Dependency, DependencyKind, Entity, FileResult, SyntaxError};
 
 pub(crate) mod c;
 pub(crate) mod cpp;
+mod loc;
 pub(crate) mod qml;
 pub(crate) mod rust;
+
+pub(crate) use loc::LocMap;
+
+type ParseAll = fn(&str, &LocMap) -> (Vec<Entity>, Vec<String>, Vec<SyntaxError>);
 
 pub(crate) struct LangDef {
     pub(crate) canonical: &'static str,
     pub(crate) aliases: &'static [&'static str],
     pub(crate) extensions: &'static [&'static str],
     pub(crate) icon: &'static str,
-    parser: fn(&str, &LocMap) -> Vec<Entity>,
+    parse_all: ParseAll,
 }
 
 pub(crate) static LANGUAGES: &[LangDef] = &[
@@ -23,92 +28,111 @@ pub(crate) static LANGUAGES: &[LangDef] = &[
         aliases: &["c"],
         extensions: &["c", "h"],
         icon: "󰙱",
-        parser: parse_c,
+        parse_all: c::parse_all,
     },
     LangDef {
         canonical: "C++",
         aliases: &["cpp", "c++"],
         extensions: &["cpp", "cc", "cxx", "hpp", "hxx", "h++"],
         icon: "󰙲",
-        parser: parse_cpp,
+        parse_all: cpp::parse_all,
     },
     LangDef {
         canonical: "QML",
         aliases: &["qml"],
         extensions: &["qml"],
         icon: "󰈚",
-        parser: parse_qml,
+        parse_all: qml::parse_all,
     },
     LangDef {
         canonical: "Rust",
         aliases: &["rust"],
         extensions: &["rs"],
         icon: "󱘗",
-        parser: parse_rust,
+        parse_all: rust::parse_all,
     },
 ];
 
-fn parse_c(src: &str, loc_map: &LocMap) -> Vec<Entity> { c::parse_impl(src, loc_map) }
-fn parse_cpp(src: &str, loc_map: &LocMap) -> Vec<Entity> { cpp::parse_impl(src, loc_map) }
-fn parse_qml(src: &str, loc_map: &LocMap) -> Vec<Entity> { qml::parse_impl(src, loc_map) }
-fn parse_rust(src: &str, loc_map: &LocMap) -> Vec<Entity> { rust::parse_impl(src, loc_map) }
-
-pub(crate) struct LocMap {
-    prefix: Vec<usize>,
+pub(crate) fn detect(path: &Path) -> Option<&'static str> {
+    let ext = path.extension().and_then(|e| e.to_str())?;
+    LANGUAGES
+        .iter()
+        .find(|l| l.extensions.contains(&ext))
+        .map(|l| l.canonical)
 }
 
-impl LocMap {
-    pub(crate) fn build(source: &str) -> Self {
-        let lines: Vec<&str> = source.lines().collect();
-        let n = lines.len();
-        let mut prefix = vec![0usize; n + 1];
-        let mut in_block = false;
-        for (i, line) in lines.iter().enumerate() {
-            let t = line.trim();
-            let is_loc = if in_block {
-                if t.contains("*/") {
-                    in_block = false;
-                }
-                false
-            } else if t.is_empty() || t.starts_with("//") || t.starts_with('*') {
-                false
-            } else if t.starts_with("/*") {
-                if !t.contains("*/") {
-                    in_block = true;
-                }
-                false
+pub(crate) fn parse_file(path: &Path, source: &str, language: &'static str) -> FileResult {
+    let loc_map = LocMap::build(source);
+    let loc = loc_map.total();
+    let Some(lang_def) = LANGUAGES.iter().find(|l| l.canonical == language) else {
+        return FileResult { path: path.to_path_buf(), language, loc, entities: vec![], imports: vec![], dependencies: vec![], errors: vec![] };
+    };
+    let (entities, imports, errors) = (lang_def.parse_all)(source, &loc_map);
+    FileResult { path: path.to_path_buf(), language, loc, entities, imports, dependencies: vec![], errors }
+}
+
+pub(crate) fn resolve_imports(
+    language: &str,
+    imports: &[String],
+    project_files: &std::collections::HashSet<std::path::PathBuf>,
+) -> Vec<Dependency> {
+    LANGUAGES
+        .iter()
+        .find(|l| l.canonical == language)
+        .map(|l| match l.canonical {
+            "C" => c::resolve_imports(imports, project_files),
+            "C++" => cpp::resolve_imports(imports, project_files),
+            "Rust" => rust::resolve_imports(imports, project_files),
+            "QML" => qml::resolve_imports(imports, project_files),
+            _ => vec![],
+        })
+        .unwrap_or_default()
+}
+
+pub(crate) fn verify_internal_deps(
+    dependencies: &[Dependency],
+    project_files: &std::collections::HashSet<std::path::PathBuf>,
+) -> Vec<Dependency> {
+    let stems: std::collections::HashSet<String> = project_files
+        .iter()
+        .filter_map(|p| p.file_stem().and_then(|s| s.to_str()).map(|s| s.to_owned()))
+        .collect();
+    dependencies
+        .iter()
+        .map(|d| {
+            if matches!(d.kind, DependencyKind::Internal)
+                && !stems.contains(d.name.as_str())
+            {
+                Dependency { name: d.name.clone(), kind: DependencyKind::External }
             } else {
-                if let Some(pos) = t.find("/*")
-                    && !t[pos..].contains("*/")
-                {
-                    in_block = true;
-                }
-                true
-            };
-            prefix[i + 1] = prefix[i] + is_loc as usize;
-        }
-        Self { prefix }
-    }
-
-    pub(crate) fn count(&self, start_line: usize, end_line: usize) -> usize {
-        let n = self.prefix.len().saturating_sub(1);
-        let e = end_line.min(n);
-        let s = start_line.saturating_sub(1);
-        self.prefix[e].saturating_sub(self.prefix[s])
-    }
-
-    pub(crate) fn total(&self) -> usize {
-        *self.prefix.last().unwrap_or(&0)
-    }
+                d.clone()
+            }
+        })
+        .collect()
 }
 
-pub(crate) fn parse_source(language: Language, source: &str) -> Option<tree_sitter::Tree> {
+pub(super) fn parse_source(language: tree_sitter::Language, source: &str) -> Option<tree_sitter::Tree> {
     let mut parser = Parser::new();
-    parser.set_language(&language).expect("failed to set tree-sitter language");
+    parser.set_language(&language).ok()?;
     parser.parse(source.as_bytes(), None)
 }
 
-pub(crate) fn collect_children<F>(
+pub(super) fn extract_imports_from_tree(
+    tree: &tree_sitter::Tree,
+    source: &str,
+    import_kinds: &[&str],
+) -> Vec<String> {
+    let mut cursor = tree.root_node().walk();
+    let mut imports = Vec::new();
+    for child in tree.root_node().children(&mut cursor) {
+        if import_kinds.contains(&child.kind()) && let Ok(text) = child.utf8_text(source.as_bytes()) {
+            imports.push(text.trim().to_owned());
+        }
+    }
+    imports
+}
+
+pub(super) fn collect_children<F>(
     node: Node<'_>,
     source: &str,
     loc_map: &LocMap,
@@ -133,29 +157,11 @@ where
     entities
 }
 
-pub(crate) fn detect(path: &Path) -> Option<&'static str> {
-    let ext = path.extension().and_then(|e| e.to_str())?;
-    LANGUAGES
-        .iter()
-        .find(|l| l.extensions.contains(&ext))
-        .map(|l| l.canonical)
-}
-
-pub(crate) fn parse_file(path: &Path, source: &str, language: &'static str) -> FileResult {
-    let loc_map = LocMap::build(source);
-    let loc = loc_map.total();
-    let Some(lang_def) = LANGUAGES.iter().find(|l| l.canonical == language) else {
-        return FileResult { path: path.to_path_buf(), language, loc: 0, entities: Vec::new() };
-    };
-    let entities = (lang_def.parser)(source, &loc_map);
-    FileResult { path: path.to_path_buf(), language, loc, entities }
-}
-
-pub(crate) fn node_lines(node: Node<'_>) -> (usize, usize) {
+pub(super) fn node_lines(node: Node<'_>) -> (usize, usize) {
     (node.start_position().row + 1, node.end_position().row + 1)
 }
 
-pub(crate) fn declarator_name(node: Node<'_>, src: &[u8]) -> Option<String> {
+pub(super) fn declarator_name(node: Node<'_>, src: &[u8]) -> Option<String> {
     match node.kind() {
         "identifier" | "field_identifier" | "type_identifier" | "namespace_identifier" => {
             node.utf8_text(src).ok().map(str::to_owned)
@@ -167,6 +173,37 @@ pub(crate) fn declarator_name(node: Node<'_>, src: &[u8]) -> Option<String> {
             .child_by_field_name("declarator")
             .and_then(|n| declarator_name(n, src)),
         _ => None,
+    }
+}
+
+pub(super) fn detect_syntax_errors(tree: &tree_sitter::Tree) -> Vec<SyntaxError> {
+    let mut errors = Vec::new();
+    walk_errors(tree.root_node(), &mut errors);
+    errors
+}
+
+fn walk_errors(node: tree_sitter::Node<'_>, errors: &mut Vec<SyntaxError>) {
+    if node.is_error() {
+        errors.push(SyntaxError {
+            kind: "error".into(),
+            node_kind: node.kind().into(),
+            start_line: node.start_position().row + 1,
+            end_line: node.end_position().row + 1,
+        });
+        return;
+    }
+    if node.is_missing() {
+        errors.push(SyntaxError {
+            kind: "missing".into(),
+            node_kind: node.kind().into(),
+            start_line: node.start_position().row + 1,
+            end_line: node.end_position().row + 1,
+        });
+        return;
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        walk_errors(child, errors);
     }
 }
 
@@ -206,39 +243,35 @@ mod tests {
     }
 
     #[test]
-    fn loc_map_counts_code_lines() {
-        let src = "int x = 1;\n\n// comment\n/* block */\n* continuation\nint y = 2;\n";
-        let map = LocMap::build(src);
-        assert_eq!(map.total(), 2);
+    fn detect_path_without_extension() {
+        assert_eq!(detect(Path::new("Makefile")), None);
     }
 
     #[test]
-    fn loc_map_skips_multiline_block_comment() {
-        let src = "int x = 1;\n/*\n   inside comment\n   no star prefix\n*/\nint y = 2;\n";
-        let map = LocMap::build(src);
-        assert_eq!(map.total(), 2);
+    fn detect_empty_extension() {
+        assert_eq!(detect(Path::new("foo.")), None);
     }
 
     #[test]
-    fn loc_map_range_is_inclusive() {
-        let src = "line1\nline2\nline3\nline4\n";
-        let map = LocMap::build(src);
-        assert_eq!(map.count(2, 3), 2);
+    fn detect_error_node() {
+        let src = "fn main() { let x = }\n";
+        let tree = parse_source(tree_sitter_rust::LANGUAGE.into(), src).unwrap();
+        let errors = detect_syntax_errors(&tree);
+        assert!(!errors.is_empty());
+        let e = errors.iter().find(|e| e.kind == "error").expect("should have error kind");
+        assert_eq!(e.node_kind, "ERROR");
+        assert_eq!(e.start_line, 1);
+        assert_eq!(e.end_line, 1);
     }
 
     #[test]
-    fn loc_map_single_line() {
-        let src = "int x = 1;\n\nint y = 2;\n";
-        let map = LocMap::build(src);
-        assert_eq!(map.count(1, 1), 1);
-        assert_eq!(map.count(2, 2), 0);
-        assert_eq!(map.count(3, 3), 1);
-    }
-
-    #[test]
-    fn loc_map_total_matches_full_range() {
-        let src = "a\nb\n\nc\n";
-        let map = LocMap::build(src);
-        assert_eq!(map.count(1, 4), map.total());
+    fn detect_missing_node() {
+        let src = "int x = 1\nint y = 2;\n";
+        let tree = parse_source(tree_sitter_c::LANGUAGE.into(), src).unwrap();
+        let errors = detect_syntax_errors(&tree);
+        assert!(!errors.is_empty());
+        let e = errors.iter().find(|e| e.kind == "missing").expect("should have missing kind");
+        assert_eq!(e.start_line, 1);
+        assert!(!e.node_kind.is_empty());
     }
 }

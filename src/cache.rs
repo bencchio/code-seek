@@ -1,6 +1,6 @@
 use crate::{
     lang,
-    model::{Entity, FileResult},
+    model::{Dependency, Entity, FileResult, SyntaxError},
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -12,6 +12,9 @@ struct CachedEntry {
     language: String,
     loc: usize,
     entities: Vec<Entity>,
+    imports: Vec<String>,
+    dependencies: Vec<Dependency>,
+    errors: Vec<SyntaxError>,
 }
 
 pub(crate) struct Cache {
@@ -53,6 +56,9 @@ impl Cache {
             language,
             loc: entry.loc,
             entities: entry.entities.clone(),
+            imports: entry.imports.clone(),
+            dependencies: entry.dependencies.clone(),
+            errors: entry.errors.clone(),
         })
     }
 
@@ -64,6 +70,9 @@ impl Cache {
                 language: result.language.to_owned(),
                 loc: result.loc,
                 entities: result.entities.clone(),
+                imports: result.imports.clone(),
+                dependencies: result.dependencies.clone(),
+                errors: result.errors.clone(),
             },
         );
     }
@@ -93,6 +102,9 @@ mod tests {
             language: "Rust",
             loc: 5,
             entities: vec![],
+            imports: vec![],
+            dependencies: vec![],
+            errors: vec![],
         }
     }
 
@@ -136,5 +148,41 @@ mod tests {
         assert_eq!(got.language, "Rust");
 
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn cache_load_corrupt_json() {
+        let path = std::env::temp_dir().join("code-seek_cache_corrupt_unit.json");
+        std::fs::write(&path, b"{{{bad json").unwrap();
+        let cache = load(&path);
+        assert!(cache.get("anything", "hash").is_none());
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn cache_load_missing_file() {
+        let cache = load(std::path::Path::new("/nonexistent/code-seek_cache_unit.json"));
+        assert!(cache.get("anything", "hash").is_none());
+    }
+
+    #[test]
+    fn cache_insert_empty_result() {
+        let mut cache = Cache { entries: HashMap::new() };
+        let r = FileResult {
+            path: PathBuf::from("empty.rs"),
+            language: "Rust",
+            loc: 0,
+            entities: vec![],
+            imports: vec![],
+            dependencies: vec![],
+            errors: vec![],
+        };
+        cache.insert("empty.rs".to_owned(), &r, "emptyhash".to_owned());
+        let got = cache.get("empty.rs", "emptyhash").unwrap();
+        assert_eq!(got.entities.len(), 0);
+        assert_eq!(got.imports.len(), 0);
+        assert_eq!(got.dependencies.len(), 0);
+        assert_eq!(got.errors.len(), 0);
+        assert_eq!(got.loc, 0);
     }
 }
