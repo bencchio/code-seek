@@ -26,11 +26,40 @@ pub(crate) fn sha256(content: &str) -> String {
     hash.iter().map(|b| format!("{b:02x}")).collect()
 }
 
+const MAX_CACHE_SIZE: u64 = 100 * 1024 * 1024; // 100 MB
+
+fn resolve_cache_path(path: &Path) -> Option<PathBuf> {
+    if let Ok(meta) = path.symlink_metadata() {
+        if meta.file_type().is_symlink() {
+            if let Ok(target) = path.canonicalize() {
+                if let Ok(cwd) = std::env::current_dir().and_then(|p| p.canonicalize()) {
+                    if !target.starts_with(&cwd) {
+                        crate::log::warn("cache symlink points outside the project directory; skipping cache");
+                        return None;
+                    }
+                }
+                return Some(target);
+            }
+        }
+    }
+    Some(path.to_path_buf())
+}
+
 pub(crate) fn load(path: &Path) -> Cache {
-    let content = match std::fs::read_to_string(path) {
+    let Some(resolved) = resolve_cache_path(path) else {
+        return Cache { entries: HashMap::new() };
+    };
+    let content = match std::fs::read_to_string(&resolved) {
         Ok(s) => s,
         Err(_) => return Cache { entries: HashMap::new() },
     };
+    if content.len() as u64 > MAX_CACHE_SIZE {
+        crate::log::warn(&format!(
+            "cache file is too large ({} MB), starting fresh",
+            content.len() / (1024 * 1024)
+        ));
+        return Cache { entries: HashMap::new() };
+    }
     let entries: HashMap<String, CachedEntry> = match serde_json::from_str(&content) {
         Ok(e) => e,
         Err(_) => {
@@ -78,12 +107,17 @@ impl Cache {
     }
 
     pub(crate) fn save(&self, path: &Path) {
-        if path.parent().is_some_and(|p| !p.as_os_str().is_empty() && !p.exists()) {
+        let Some(resolved) = resolve_cache_path(path) else {
             return;
+        };
+        if let Some(parent) = resolved.parent() {
+            if !parent.exists() {
+                return;
+            }
         }
         match serde_json::to_string(&self.entries) {
             Ok(json) => {
-                if let Err(e) = std::fs::write(path, json) {
+                if let Err(e) = std::fs::write(&resolved, json) {
                     crate::log::warn(&format!("failed to save cache: {e}"));
                 }
             }
@@ -163,6 +197,17 @@ mod tests {
     fn cache_load_missing_file() {
         let cache = load(std::path::Path::new("/nonexistent/code-seek_cache_unit.json"));
         assert!(cache.get("anything", "hash").is_none());
+    }
+
+    #[test]
+    fn cache_load_oversized_file_returns_empty() {
+        let path = std::env::temp_dir().join("code-seek_cache_oversized_unit.json");
+        let f = std::fs::File::create(&path).unwrap();
+        f.set_len((MAX_CACHE_SIZE + 1) as u64).unwrap();
+        drop(f);
+        let cache = load(&path);
+        assert!(cache.get("anything", "hash").is_none());
+        std::fs::remove_file(&path).unwrap();
     }
 
     #[test]

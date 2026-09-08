@@ -1,6 +1,5 @@
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
-use std::process;
 
 mod cache;
 mod config;
@@ -42,20 +41,23 @@ enum Command {
         max_depth: Option<usize>,
         #[arg(long, value_delimiter = ',', value_name = "DIR")]
         ignore: Vec<String>,
+        #[arg(long, default_value = "all", value_name = "INFO")]
+        info: String,
     },
 }
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
-    let result = match cli.command {
-        Command::Init { force } => init::run(force),
-        Command::Mcp => mcp::run(),
-        Command::Scan { path, lang, format, filter_match, max_depth, ignore } => {
-            scan::run(&path, &lang, &format, filter_match.as_deref().unwrap_or(""), max_depth, &ignore)
+    match cli.command {
+        Command::Init { force } => init::run(force)?,
+        Command::Mcp => mcp::run()?,
+        Command::Scan { path, lang, format, filter_match, max_depth, ignore, info } => {
+            let info_lower = info.to_lowercase();
+            if !["all", "no-tests", "tests-only"].contains(&info_lower.as_str()) {
+                return Err(format!("invalid --info value '{info}'. Valid: all, no-tests, tests-only").into());
+            }
+            scan::run(&path, &lang, &format, filter_match.as_deref().unwrap_or(""), max_depth, &ignore, &info_lower)?;
         }
-    };
-    if let Err(e) = result {
-        eprintln!("error: {e}");
-        process::exit(1);
     }
+    Ok(())
 }

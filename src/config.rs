@@ -7,11 +7,15 @@ pub(crate) struct Config {
     pub(crate) scan: ScanConfig,
 }
 
+fn default_max_file_size_mb() -> f64 { 10.0 }
+
 #[derive(Deserialize)]
-#[serde(default)]
 pub(crate) struct ScanConfig {
+    #[serde(default)]
     pub(crate) ignore_dirs: Vec<String>,
+    #[serde(default)]
     pub(crate) follow_symlinks: bool,
+    #[serde(default = "default_max_file_size_mb")]
     pub(crate) max_file_size_mb: f64,
 }
 

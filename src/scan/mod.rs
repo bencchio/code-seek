@@ -19,8 +19,9 @@ pub(crate) fn run(
     match_pattern: &str,
     max_depth: Option<usize>,
     extra_ignore: &[String],
+    info: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let results = build_scan_results(path, lang_filter, match_pattern, max_depth, extra_ignore)?;
+    let results = build_scan_results(path, lang_filter, match_pattern, max_depth, extra_ignore, info)?;
     match format {
         "json" => render::print_json(&results, path)?,
         _ => render::print_tree(&results),
@@ -34,6 +35,7 @@ pub(crate) fn build_scan_results(
     match_pattern: &str,
     max_depth: Option<usize>,
     extra_ignore: &[String],
+    info: &str,
 ) -> Result<Vec<FileResult>, Box<dyn std::error::Error>> {
     if !path.exists() {
         return Err(format!("'{}' does not exist", path.display()).into());
@@ -62,7 +64,7 @@ pub(crate) fn build_scan_results(
         file_cache.save(cache_path);
     }
     resolve_dependencies(&mut results);
-    apply_filters(&mut results, match_pattern, max_depth);
+    apply_filters(&mut results, match_pattern, max_depth, info);
     Ok(results)
 }
 
@@ -77,18 +79,6 @@ fn scan_one(
     if !lang_matches(language, lang_filter) {
         return None;
     }
-    if let Ok(meta) = fs::metadata(file) {
-        let size_mb = meta.len() as f64 / (1024.0 * 1024.0);
-        if size_mb > cfg.scan.max_file_size_mb {
-            crate::log::warn(&format!(
-                "skipping '{}' ({:.1} MB exceeds {:.0} MB limit)",
-                file.display(),
-                size_mb,
-                cfg.scan.max_file_size_mb,
-            ));
-            return None;
-        }
-    }
     let source = match fs::read_to_string(file) {
         Ok(s) => s,
         Err(e) => {
@@ -96,6 +86,16 @@ fn scan_one(
             return None;
         }
     };
+    let size_mb = source.len() as f64 / (1024.0 * 1024.0);
+    if size_mb > cfg.scan.max_file_size_mb {
+        crate::log::warn(&format!(
+            "skipping '{}' ({:.1} MB exceeds {:.0} MB limit)",
+            file.display(),
+            size_mb,
+            cfg.scan.max_file_size_mb,
+        ));
+        return None;
+    }
     let key = file.display().to_string();
     let sha = cache::sha256(&source);
     if let Some(cached) = cache.get(&key, &sha) {
@@ -107,14 +107,12 @@ fn scan_one(
     Some(result)
 }
 
-fn apply_filters(results: &mut [FileResult], pattern: &str, max_depth: Option<usize>) {
+fn apply_filters(results: &mut [FileResult], pattern: &str, max_depth: Option<usize>, info: &str) {
     let pattern = pattern.to_lowercase();
-    if pattern.is_empty() && max_depth.is_none() {
-        return;
-    }
     for result in results.iter_mut() {
         let entities = std::mem::take(&mut result.entities);
-        result.entities = filter::filter_entities(entities, &pattern, max_depth, 0);
+        let entities = filter::filter_entities(entities, &pattern, max_depth, 0);
+        result.entities = filter::filter_by_info(entities, info);
     }
 }
 
@@ -122,9 +120,7 @@ fn resolve_dependencies(results: &mut [FileResult]) {
     let project_files: HashSet<std::path::PathBuf> =
         results.iter().map(|r| r.path.clone()).collect();
     for r in results.iter_mut() {
-        let deps = lang::resolve_imports(r.language, &r.imports, &project_files);
-        let verified = lang::verify_internal_deps(&deps, &project_files);
-        r.dependencies = verified;
+        r.dependencies = lang::resolve_imports(r.language, &r.imports, &project_files);
     }
 }
 

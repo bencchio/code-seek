@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use crate::lang;
@@ -15,16 +16,27 @@ pub(crate) fn walk(root: &Path, ignore_dirs: &[String], follow_symlinks: bool) -
         return Vec::new();
     }
     let mut files = Vec::with_capacity(256);
-    walk_dir(root, &mut files, ignore_dirs, follow_symlinks);
+    let mut visited = HashSet::new();
+    walk_dir(root, &mut files, ignore_dirs, follow_symlinks, &mut visited);
     files.sort();
     files
 }
 
-fn walk_dir(dir: &Path, files: &mut Vec<PathBuf>, ignore_dirs: &[String], follow_symlinks: bool) {
+fn walk_dir(
+    dir: &Path,
+    files: &mut Vec<PathBuf>,
+    ignore_dirs: &[String],
+    follow_symlinks: bool,
+    visited: &mut HashSet<PathBuf>,
+) {
+    let real = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
+    if !visited.insert(real) {
+        return;
+    }
     let entries = match std::fs::read_dir(dir) {
         Ok(e) => e,
         Err(e) => {
-            eprintln!("warning: skipping '{}': {}", dir.display(), e);
+            crate::log::warn(&format!("skipping '{}': {}", dir.display(), e));
             return;
         }
     };
@@ -38,7 +50,7 @@ fn walk_dir(dir: &Path, files: &mut Vec<PathBuf>, ignore_dirs: &[String], follow
             if ALWAYS_IGNORED.contains(&name) || ignore_dirs.iter().any(|d| d == name) {
                 continue;
             }
-            walk_dir(&path, files, ignore_dirs, follow_symlinks);
+            walk_dir(&path, files, ignore_dirs, follow_symlinks, visited);
         } else if lang::detect(&path).is_some() {
             files.push(path);
         }

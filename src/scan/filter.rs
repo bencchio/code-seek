@@ -1,7 +1,47 @@
 use crate::{
-    model::{Entity, FileResult},
+    model::{Entity, EntityType, FileResult},
     scan::render,
 };
+
+pub(super) fn filter_by_info(entities: Vec<Entity>, info: &str) -> Vec<Entity> {
+    match info {
+        "no-tests" => strip_test_modules(entities),
+        "tests-only" => keep_test_modules_only(entities),
+        _ => entities,
+    }
+}
+
+fn strip_test_modules(entities: Vec<Entity>) -> Vec<Entity> {
+    entities
+        .into_iter()
+        .filter_map(|mut e| {
+            if e.entity_type == EntityType::Namespace && e.name == "tests" {
+                return None;
+            }
+            e.children = strip_test_modules(e.children);
+            Some(e)
+        })
+        .collect()
+}
+
+fn keep_test_modules_only(entities: Vec<Entity>) -> Vec<Entity> {
+    keep_test_mods_inner(entities, false)
+}
+
+fn keep_test_mods_inner(entities: Vec<Entity>, inside: bool) -> Vec<Entity> {
+    entities
+        .into_iter()
+        .filter_map(|mut e| {
+            let is_test_mod = e.entity_type == EntityType::Namespace && e.name == "tests";
+            e.children = keep_test_mods_inner(e.children, inside || is_test_mod);
+            if is_test_mod || inside || !e.children.is_empty() {
+                Some(e)
+            } else {
+                None
+            }
+        })
+        .collect()
+}
 
 pub(super) fn filter_entities(
     entities: Vec<Entity>,
@@ -257,6 +297,43 @@ mod tests {
         assert_eq!(by_type[0]["count"], 2);
         assert_eq!(by_type[1]["entity_type"], "Struct");
         assert_eq!(by_type[1]["count"], 1);
+    }
+
+    #[test]
+    fn filter_by_info_all_preserves_all() {
+        let e = make_entity("foo", EntityType::Function, vec![]);
+        let result = filter_by_info(vec![e.clone()], "all");
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].name, "foo");
+    }
+
+    #[test]
+    fn filter_by_info_no_tests_removes_test_mod() {
+        let child = make_entity("helper", EntityType::Function, vec![]);
+        let test_mod = make_entity("tests", EntityType::Namespace, vec![child]);
+        let func = make_entity("main", EntityType::Function, vec![]);
+        let result = filter_by_info(vec![test_mod, func], "no-tests");
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].name, "main");
+    }
+
+    #[test]
+    fn filter_by_info_tests_only_keeps_test_mod() {
+        let child = make_entity("helper", EntityType::Function, vec![]);
+        let test_mod = make_entity("tests", EntityType::Namespace, vec![child]);
+        let func = make_entity("main", EntityType::Function, vec![]);
+        let result = filter_by_info(vec![test_mod, func], "tests-only");
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].name, "tests");
+        assert_eq!(result[0].children.len(), 1);
+        assert_eq!(result[0].children[0].name, "helper");
+    }
+
+    #[test]
+    fn filter_by_info_tests_only_drops_other_entities() {
+        let func = make_entity("main", EntityType::Function, vec![]);
+        let result = filter_by_info(vec![func], "tests-only");
+        assert!(result.is_empty());
     }
 
     #[test]

@@ -71,7 +71,11 @@
             "Rust",
             "C",
             "C++",
-            "QML"
+            "Go",
+            "JavaScript",
+            "Python",
+            "QML",
+            "TypeScript"
           ]
         },
         "loc": {

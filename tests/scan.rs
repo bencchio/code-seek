@@ -6,6 +6,121 @@ fn bin() -> std::path::PathBuf {
 }
 
 #[test]
+fn filter_combined_match_and_depth() {
+    let dir = std::env::temp_dir().join("code_seek_inttest_combined");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(
+        dir.join("main.rs"),
+        "fn main() {}\nfn helper() {}\nstruct Config {}\n",
+    )
+    .unwrap();
+
+    let out = Command::new(bin())
+        .args(["scan", dir.to_str().unwrap(), "--match", "main", "--max-depth", "1"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("main"), "matching entity must appear");
+    assert!(!stdout.contains("helper"), "non-matching entity must be absent");
+    assert!(!stdout.contains("Config"), "non-matching entity must be absent");
+
+    fs::remove_dir_all(&dir).unwrap();
+}
+
+
+#[test]
+fn filter_empty_match_shows_file_header() {
+    let dir = std::env::temp_dir().join("code_seek_inttest_match_empty");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("lib.rs"), "fn add() {}").unwrap();
+
+    let out = Command::new(bin())
+        .args(["scan", dir.to_str().unwrap(), "--match", "zzznomatch"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("[Rust]"), "file header must still appear with 0 matches");
+    assert!(stdout.contains("0 entities"), "entity count must be 0");
+    assert!(!stdout.contains("add"), "non-matching entity must not appear");
+
+    fs::remove_dir_all(&dir).unwrap();
+}
+
+
+#[test]
+fn filter_match_includes_matching_excludes_others() {
+    let dir = std::env::temp_dir().join("code_seek_inttest_match");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("lib.rs"), "fn add(a: i32, b: i32) -> i32 { a + b }\nfn sub(a: i32, b: i32) -> i32 { a - b }").unwrap();
+
+    let out = Command::new(bin())
+        .args(["scan", dir.to_str().unwrap(), "--match", "add"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("add"), "expected 'add' in output");
+    assert!(!stdout.contains("sub"), "expected 'sub' to be filtered out");
+
+    fs::remove_dir_all(&dir).unwrap();
+}
+
+
+#[test]
+fn filter_match_preserves_parent_impl() {
+    let dir = std::env::temp_dir().join("code_seek_inttest_match_tree");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(
+        dir.join("foo.rs"),
+        "impl Foo {\n    fn bar(&self) {}\n    fn baz(&self) {}\n}\n",
+    )
+    .unwrap();
+
+    let out = Command::new(bin())
+        .args(["scan", dir.to_str().unwrap(), "--match", "bar"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("Foo"), "parent impl Foo must be preserved");
+    assert!(stdout.contains("bar"), "matching child must appear");
+    assert!(!stdout.contains("baz"), "non-matching child must be excluded");
+
+    fs::remove_dir_all(&dir).unwrap();
+}
+
+
+#[test]
+fn filter_max_depth_truncates_children() {
+    let dir = std::env::temp_dir().join("code_seek_inttest_depth");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(
+        dir.join("foo.rs"),
+        "impl Foo {\n    fn bar(&self) {}\n}\n",
+    )
+    .unwrap();
+
+    let out = Command::new(bin())
+        .args(["scan", dir.to_str().unwrap(), "--max-depth", "1"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("Foo"), "root entity must appear at depth 1");
+    assert!(!stdout.contains("bar"), "child at depth 2 must be pruned");
+
+    fs::remove_dir_all(&dir).unwrap();
+}
+
+
+#[test]
 fn scan_c_file() {
     let dir = std::env::temp_dir().join("code_seek_inttest_c");
     fs::create_dir_all(&dir).unwrap();
@@ -25,6 +140,7 @@ fn scan_c_file() {
     fs::remove_dir_all(&dir).unwrap();
 }
 
+
 #[test]
 fn scan_cpp_file() {
     let dir = std::env::temp_dir().join("code_seek_inttest_cpp");
@@ -41,31 +157,13 @@ fn scan_cpp_file() {
     fs::remove_dir_all(&dir).unwrap();
 }
 
-#[test]
-fn scan_single_c_file() {
-    let file = std::env::temp_dir().join("code_seek_inttest_single.c");
-    fs::write(&file, "int add(int a, int b) { return a + b; }").unwrap();
-
-    let out = Command::new(bin())
-        .args(["scan", file.to_str().unwrap()])
-        .output()
-        .unwrap();
-    assert!(out.status.success());
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("[C]"));
-    assert!(stdout.contains("1 entity"));
-
-    fs::remove_file(&file).unwrap();
-}
 
 #[test]
-fn scan_rust_file() {
-    let dir = std::env::temp_dir().join("code_seek_inttest_rust");
+fn scan_empty_rs_file() {
+    let dir = std::env::temp_dir().join("code_seek_inttest_empty_rs");
+    let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
-    fs::write(
-        dir.join("test.rs"),
-        "fn hello() -> u32 { 42 }\nstruct Foo { x: i32 }\nimpl Foo { fn get(&self) -> i32 { self.x } }",
-    ).unwrap();
+    fs::write(dir.join("empty.rs"), b"").unwrap();
 
     let out = Command::new(bin())
         .args(["scan", dir.to_str().unwrap()])
@@ -73,77 +171,160 @@ fn scan_rust_file() {
         .unwrap();
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("[Rust]"));
+    assert!(stdout.contains("0 entities"), "empty file must show 0 entities");
+    assert!(stdout.contains("0 LOC"), "empty file must show 0 LOC");
+
+    fs::remove_dir_all(&dir).unwrap();
+}
+
+
+#[test]
+fn scan_go_file() {
+    let dir = std::env::temp_dir().join("code_seek_inttest_go");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(
+        dir.join("main.go"),
+        "package main\nfunc add(a int, b int) int { return a + b }\nfunc main() {}\n",
+    )
+    .unwrap();
+
+    let out = Command::new(bin())
+        .args(["scan", dir.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("[Go]"));
+    assert!(stdout.contains("2 entities"));
+
+    fs::remove_dir_all(&dir).unwrap();
+}
+
+
+#[test]
+fn scan_info_invalid_prints_error() {
+    let dir = std::env::temp_dir().join("code_seek_inttest_info_bad");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("lib.rs"), "fn main() {}\n").unwrap();
+
+    let out = Command::new(bin())
+        .args(["scan", dir.to_str().unwrap(), "--info", "bogus"])
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("invalid"));
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[cfg(unix)]
+
+#[test]
+fn scan_info_no_tests_excludes_test_module() {
+    let dir = std::env::temp_dir().join("code_seek_inttest_info");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("lib.rs"),
+        "fn main() {}\n#[cfg(test)]\nmod tests {\n    fn helper() {}\n}\n",
+    )
+    .unwrap();
+
+    let out = Command::new(bin())
+        .args(["scan", dir.to_str().unwrap(), "--info", "no-tests", "--format", "json"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(json["total_entities"].as_u64().unwrap(), 1, "no-tests should exclude test mod");
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+
+#[test]
+fn scan_info_tests_only_shows_test_module() {
+    let dir = std::env::temp_dir().join("code_seek_inttest_info_tests");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("lib.rs"),
+        "fn main() {}\nmod tests {\n    fn helper() {}\n}\n",
+    )
+    .unwrap();
+
+    let out = Command::new(bin())
+        .args(["scan", dir.to_str().unwrap(), "--info", "tests-only", "--format", "json"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(json["total_entities"].as_u64().unwrap(), 2, "tests-only should keep mod + child");
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+
+#[test]
+fn scan_invalid_lang_cli() {
+    let dir = std::env::temp_dir().join("code_seek_inttest_invalid_lang");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("main.rs"), b"fn main() {}").unwrap();
+
+    let out = Command::new(bin())
+        .args(["scan", dir.to_str().unwrap(), "--lang", "cobol"])
+        .output()
+        .unwrap();
+    assert!(!out.status.success(), "invalid lang must fail");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("cobol"), "error must mention the invalid lang");
+
+    fs::remove_dir_all(&dir).unwrap();
+}
+
+
+#[test]
+fn scan_js_file() {
+    let dir = std::env::temp_dir().join("code_seek_inttest_js");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(
+        dir.join("app.js"),
+        "import React from 'react';\nfunction render() {}\nclass App {\n  init() {}\n  destroy() {}\n}\n",
+    )
+    .unwrap();
+
+    let out = Command::new(bin())
+        .args(["scan", dir.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("[JavaScript]"));
     assert!(stdout.contains("4 entities"));
 
     fs::remove_dir_all(&dir).unwrap();
 }
 
-#[test]
-fn scan_qml_file() {
-    let dir = std::env::temp_dir().join("code_seek_inttest_qml");
-    fs::create_dir_all(&dir).unwrap();
-    fs::write(
-        dir.join("test.qml"),
-        "import QtQuick 2.0\nRectangle {\n    id: root\n    function reset() { }\n    function update(x) { }\n}",
-    ).unwrap();
-
-    let out = Command::new(bin())
-        .args(["scan", dir.to_str().unwrap()])
-        .output()
-        .unwrap();
-    assert!(out.status.success());
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("[QML]"));
-    assert!(stdout.contains("3 entities"));
-
-    fs::remove_dir_all(&dir).unwrap();
-}
 
 #[test]
-fn scan_nonexistent_path() {
-    let out = Command::new(bin())
-        .args(["scan", "/nonexistent_code-seek_path"])
-        .output()
-        .unwrap();
-    assert!(!out.status.success());
-    assert!(String::from_utf8_lossy(&out.stderr).contains("does not exist"));
-}
-
-#[test]
-fn scan_json_format_produces_valid_json() {
-    let dir = std::env::temp_dir().join("code_seek_inttest_json");
+fn scan_json_dependency_kind_internal() {
+    let dir = std::env::temp_dir().join("code_seek_inttest_deps_internal");
     let _ = fs::remove_dir_all(&dir);
-    fs::create_dir_all(&dir).unwrap();
+    fs::create_dir_all(dir.join("src")).unwrap();
+    // main.rs imports std (external) and helper (internal, file exists in scan root)
     fs::write(
-        dir.join("lib.rs"),
-        "fn add(a: i32, b: i32) -> i32 { a + b }\nstruct Point { x: f32, y: f32 }",
+        dir.join("src/main.rs"),
+        "use std::collections::HashMap;\nuse helper;\nfn main() {}",
     )
     .unwrap();
-
-    let out = Command::new(bin())
-        .args(["scan", dir.to_str().unwrap(), "--format", "json"])
-        .output()
-        .unwrap();
-    assert!(out.status.success());
-
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    let json: serde_json::Value = serde_json::from_str(&stdout).expect("output is not valid JSON");
-
-    assert_eq!(json["total_files"], 1);
-    assert_eq!(json["total_entities"], 2);
-    assert!(json["files"].is_array());
-    assert_eq!(json["files"][0]["language"], "Rust");
-
-    fs::remove_dir_all(&dir).unwrap();
-}
-
-#[test]
-fn scan_json_includes_imports_field() {
-    let dir = std::env::temp_dir().join("code_seek_inttest_imports");
-    let _ = fs::remove_dir_all(&dir);
-    fs::create_dir_all(&dir).unwrap();
-    fs::write(dir.join("main.rs"), "use std::collections::HashMap;\nfn main() {}").unwrap();
+    fs::write(dir.join("src/helper.rs"), "pub fn help() {}").unwrap();
 
     let out = Command::new(bin())
         .args(["scan", dir.to_str().unwrap(), "--format", "json"])
@@ -154,14 +335,29 @@ fn scan_json_includes_imports_field() {
     let stdout = String::from_utf8_lossy(&out.stdout);
     let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
 
-    let file = &json["files"][0];
-    assert!(file.get("imports").is_some());
-    let imports = file["imports"].as_array().unwrap();
-    assert!(!imports.is_empty());
-    assert!(imports[0].as_str().unwrap().contains("HashMap"));
+    let main_file = json["files"].as_array().unwrap().iter().find(|f| {
+        f["path"].as_str().unwrap().ends_with("main.rs")
+    }).unwrap();
+    let deps = main_file["dependencies"].as_array().unwrap();
+
+    let std_dep = deps.iter().find(|d| d["name"] == "std").expect("should have std dep");
+    assert_eq!(std_dep["kind"], "external", "std should be external");
+
+    let helper_dep = deps.iter().find(|d| d["name"] == "helper").expect("should have helper dep");
+    assert_eq!(helper_dep["kind"], "internal", "helper should be internal");
+
+    // tree output should show both ext and int deps
+    let out_tree = Command::new(bin())
+        .args(["scan", dir.to_str().unwrap()])
+        .output()
+        .unwrap();
+    let stdout_tree = String::from_utf8_lossy(&out_tree.stdout);
+    assert!(stdout_tree.contains("ext deps"), "tree should show ext deps count");
+    assert!(stdout_tree.contains("int deps"), "tree should show int deps count");
 
     fs::remove_dir_all(&dir).unwrap();
 }
+
 
 #[test]
 fn scan_json_entity_paths_are_correct() {
@@ -198,161 +394,35 @@ fn scan_json_entity_paths_are_correct() {
     fs::remove_dir_all(&dir).unwrap();
 }
 
-#[test]
-fn filter_match_includes_matching_excludes_others() {
-    let dir = std::env::temp_dir().join("code_seek_inttest_match");
-    let _ = fs::remove_dir_all(&dir);
-    fs::create_dir_all(&dir).unwrap();
-    fs::write(dir.join("lib.rs"), "fn add(a: i32, b: i32) -> i32 { a + b }\nfn sub(a: i32, b: i32) -> i32 { a - b }").unwrap();
-
-    let out = Command::new(bin())
-        .args(["scan", dir.to_str().unwrap(), "--match", "add"])
-        .output()
-        .unwrap();
-    assert!(out.status.success());
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("add"), "expected 'add' in output");
-    assert!(!stdout.contains("sub"), "expected 'sub' to be filtered out");
-
-    fs::remove_dir_all(&dir).unwrap();
-}
 
 #[test]
-fn filter_match_preserves_parent_impl() {
-    let dir = std::env::temp_dir().join("code_seek_inttest_match_tree");
+fn scan_json_format_produces_valid_json() {
+    let dir = std::env::temp_dir().join("code_seek_inttest_json");
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
-    fs::write(
-        dir.join("foo.rs"),
-        "impl Foo {\n    fn bar(&self) {}\n    fn baz(&self) {}\n}\n",
-    )
-    .unwrap();
-
-    let out = Command::new(bin())
-        .args(["scan", dir.to_str().unwrap(), "--match", "bar"])
-        .output()
-        .unwrap();
-    assert!(out.status.success());
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("Foo"), "parent impl Foo must be preserved");
-    assert!(stdout.contains("bar"), "matching child must appear");
-    assert!(!stdout.contains("baz"), "non-matching child must be excluded");
-
-    fs::remove_dir_all(&dir).unwrap();
-}
-
-#[test]
-fn filter_max_depth_truncates_children() {
-    let dir = std::env::temp_dir().join("code_seek_inttest_depth");
-    let _ = fs::remove_dir_all(&dir);
-    fs::create_dir_all(&dir).unwrap();
-    fs::write(
-        dir.join("foo.rs"),
-        "impl Foo {\n    fn bar(&self) {}\n}\n",
-    )
-    .unwrap();
-
-    let out = Command::new(bin())
-        .args(["scan", dir.to_str().unwrap(), "--max-depth", "1"])
-        .output()
-        .unwrap();
-    assert!(out.status.success());
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("Foo"), "root entity must appear at depth 1");
-    assert!(!stdout.contains("bar"), "child at depth 2 must be pruned");
-
-    fs::remove_dir_all(&dir).unwrap();
-}
-
-#[test]
-fn filter_empty_match_shows_file_header() {
-    let dir = std::env::temp_dir().join("code_seek_inttest_match_empty");
-    let _ = fs::remove_dir_all(&dir);
-    fs::create_dir_all(&dir).unwrap();
-    fs::write(dir.join("lib.rs"), "fn add() {}").unwrap();
-
-    let out = Command::new(bin())
-        .args(["scan", dir.to_str().unwrap(), "--match", "zzznomatch"])
-        .output()
-        .unwrap();
-    assert!(out.status.success());
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("[Rust]"), "file header must still appear with 0 matches");
-    assert!(stdout.contains("0 entities"), "entity count must be 0");
-    assert!(!stdout.contains("add"), "non-matching entity must not appear");
-
-    fs::remove_dir_all(&dir).unwrap();
-}
-
-#[test]
-fn filter_combined_match_and_depth() {
-    let dir = std::env::temp_dir().join("code_seek_inttest_combined");
-    let _ = fs::remove_dir_all(&dir);
-    fs::create_dir_all(&dir).unwrap();
-    fs::write(
-        dir.join("main.rs"),
-        "fn main() {}\nfn helper() {}\nstruct Config {}\n",
-    )
-    .unwrap();
-
-    let out = Command::new(bin())
-        .args(["scan", dir.to_str().unwrap(), "--match", "main", "--max-depth", "1"])
-        .output()
-        .unwrap();
-    assert!(out.status.success());
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("main"), "matching entity must appear");
-    assert!(!stdout.contains("helper"), "non-matching entity must be absent");
-    assert!(!stdout.contains("Config"), "non-matching entity must be absent");
-
-    fs::remove_dir_all(&dir).unwrap();
-}
-
-#[test]
-fn scan_uses_cache_on_second_run() {
-    let dir = std::env::temp_dir().join("code_seek_inttest_cache");
-    let _ = fs::remove_dir_all(&dir);
-    fs::create_dir_all(&dir).unwrap();
-    fs::create_dir_all(dir.join(".code-seek")).unwrap();
     fs::write(
         dir.join("lib.rs"),
-        "fn add(a: i32, b: i32) -> i32 { a + b }\nstruct Point { x: f32 }",
+        "fn add(a: i32, b: i32) -> i32 { a + b }\nstruct Point { x: f32, y: f32 }",
     )
     .unwrap();
 
-    // First run — parses the file, writes cache
-    let out1 = Command::new(bin())
-        .args(["scan", "."])
-        .current_dir(&dir)
+    let out = Command::new(bin())
+        .args(["scan", dir.to_str().unwrap(), "--format", "json"])
         .output()
         .unwrap();
-    assert!(out1.status.success(), "first scan failed: {}", String::from_utf8_lossy(&out1.stderr));
-    let stdout1 = String::from_utf8_lossy(&out1.stdout).to_string();
+    assert!(out.status.success());
 
-    let cache_path = dir.join(".code-seek/cache.json");
-    assert!(cache_path.exists(), "cache.json must be created after first scan");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let json: serde_json::Value = serde_json::from_str(&stdout).expect("output is not valid JSON");
 
-    let cache_contents = fs::read_to_string(&cache_path).unwrap();
-    let cache_json: serde_json::Value =
-        serde_json::from_str(&cache_contents).expect("cache is valid JSON");
-    assert!(
-        cache_json.as_object().map(|o| !o.is_empty()).unwrap_or(false),
-        "cache must contain entries",
-    );
-
-    // Second run — reads from cache, no re-parse
-    let out2 = Command::new(bin())
-        .args(["scan", "."])
-        .current_dir(&dir)
-        .output()
-        .unwrap();
-    assert!(out2.status.success(), "second scan failed: {}", String::from_utf8_lossy(&out2.stderr));
-    let stdout2 = String::from_utf8_lossy(&out2.stdout).to_string();
-
-    assert_eq!(stdout1, stdout2, "cached scan must produce identical output");
+    assert_eq!(json["total_files"], 1);
+    assert_eq!(json["total_entities"], 2);
+    assert!(json["files"].is_array());
+    assert_eq!(json["files"][0]["language"], "Rust");
 
     fs::remove_dir_all(&dir).unwrap();
 }
+
 
 #[test]
 fn scan_json_includes_dependencies_field() {
@@ -402,98 +472,6 @@ fn scan_json_includes_dependencies_field() {
     fs::remove_dir_all(&dir).unwrap();
 }
 
-#[test]
-fn scan_json_dependency_kind_internal() {
-    let dir = std::env::temp_dir().join("code_seek_inttest_deps_internal");
-    let _ = fs::remove_dir_all(&dir);
-    fs::create_dir_all(dir.join("src")).unwrap();
-    // main.rs imports std (external) and helper (internal, file exists in scan root)
-    fs::write(
-        dir.join("src/main.rs"),
-        "use std::collections::HashMap;\nuse helper;\nfn main() {}",
-    )
-    .unwrap();
-    fs::write(dir.join("src/helper.rs"), "pub fn help() {}").unwrap();
-
-    let out = Command::new(bin())
-        .args(["scan", dir.to_str().unwrap(), "--format", "json"])
-        .output()
-        .unwrap();
-    assert!(out.status.success());
-
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
-
-    let main_file = json["files"].as_array().unwrap().iter().find(|f| {
-        f["path"].as_str().unwrap().ends_with("main.rs")
-    }).unwrap();
-    let deps = main_file["dependencies"].as_array().unwrap();
-
-    let std_dep = deps.iter().find(|d| d["name"] == "std").expect("should have std dep");
-    assert_eq!(std_dep["kind"], "external", "std should be external");
-
-    let helper_dep = deps.iter().find(|d| d["name"] == "helper").expect("should have helper dep");
-    assert_eq!(helper_dep["kind"], "internal", "helper should be internal");
-
-    // tree output should show both ext and int deps
-    let out_tree = Command::new(bin())
-        .args(["scan", dir.to_str().unwrap()])
-        .output()
-        .unwrap();
-    let stdout_tree = String::from_utf8_lossy(&out_tree.stdout);
-    assert!(stdout_tree.contains("ext deps"), "tree should show ext deps count");
-    assert!(stdout_tree.contains("int deps"), "tree should show int deps count");
-
-    fs::remove_dir_all(&dir).unwrap();
-}
-
-#[test]
-fn scan_json_with_match_filters_entities() {
-    let dir = std::env::temp_dir().join("code_seek_inttest_json_match");
-    let _ = fs::remove_dir_all(&dir);
-    fs::create_dir_all(&dir).unwrap();
-    fs::write(
-        dir.join("lib.rs"),
-        "fn add(a: i32, b: i32) -> i32 { a + b }\nfn sub(a: i32, b: i32) -> i32 { a - b }",
-    )
-    .unwrap();
-
-    let out = Command::new(bin())
-        .args(["scan", dir.to_str().unwrap(), "--format", "json", "--match", "add"])
-        .output()
-        .unwrap();
-    assert!(out.status.success());
-
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
-    assert_eq!(json["total_entities"], 1);
-    assert_eq!(json["files"][0]["entities"][0]["name"], "add");
-
-    fs::remove_dir_all(&dir).unwrap();
-}
-
-#[test]
-fn scan_json_lang_filter_applies() {
-    let dir = std::env::temp_dir().join("code_seek_inttest_json_lang");
-    let _ = fs::remove_dir_all(&dir);
-    fs::create_dir_all(&dir).unwrap();
-    fs::write(dir.join("main.rs"), "fn main() {}").unwrap();
-    fs::write(dir.join("util.c"), "int helper() { return 0; }").unwrap();
-
-    let out = Command::new(bin())
-        .args(["scan", dir.to_str().unwrap(), "--format", "json", "--lang", "rust"])
-        .output()
-        .unwrap();
-    assert!(out.status.success());
-
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
-
-    assert_eq!(json["total_files"], 1);
-    assert_eq!(json["files"][0]["language"], "Rust");
-
-    fs::remove_dir_all(&dir).unwrap();
-}
 
 #[test]
 fn scan_json_includes_errors_field() {
@@ -550,6 +528,313 @@ fn scan_json_includes_errors_field() {
     fs::remove_dir_all(&dir).unwrap();
 }
 
+
+#[test]
+fn scan_json_includes_imports_field() {
+    let dir = std::env::temp_dir().join("code_seek_inttest_imports");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("main.rs"), "use std::collections::HashMap;\nfn main() {}").unwrap();
+
+    let out = Command::new(bin())
+        .args(["scan", dir.to_str().unwrap(), "--format", "json"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+
+    let file = &json["files"][0];
+    assert!(file.get("imports").is_some());
+    let imports = file["imports"].as_array().unwrap();
+    assert!(!imports.is_empty());
+    assert!(imports[0].as_str().unwrap().contains("HashMap"));
+
+    fs::remove_dir_all(&dir).unwrap();
+}
+
+
+#[test]
+fn scan_json_lang_filter_applies() {
+    let dir = std::env::temp_dir().join("code_seek_inttest_json_lang");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("main.rs"), "fn main() {}").unwrap();
+    fs::write(dir.join("util.c"), "int helper() { return 0; }").unwrap();
+
+    let out = Command::new(bin())
+        .args(["scan", dir.to_str().unwrap(), "--format", "json", "--lang", "rust"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+
+    assert_eq!(json["total_files"], 1);
+    assert_eq!(json["files"][0]["language"], "Rust");
+
+    fs::remove_dir_all(&dir).unwrap();
+}
+
+
+#[test]
+fn scan_json_with_match_filters_entities() {
+    let dir = std::env::temp_dir().join("code_seek_inttest_json_match");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(
+        dir.join("lib.rs"),
+        "fn add(a: i32, b: i32) -> i32 { a + b }\nfn sub(a: i32, b: i32) -> i32 { a - b }",
+    )
+    .unwrap();
+
+    let out = Command::new(bin())
+        .args(["scan", dir.to_str().unwrap(), "--format", "json", "--match", "add"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(json["total_entities"], 1);
+    assert_eq!(json["files"][0]["entities"][0]["name"], "add");
+
+    fs::remove_dir_all(&dir).unwrap();
+}
+
+
+#[test]
+fn scan_nonexistent_path() {
+    let out = Command::new(bin())
+        .args(["scan", "/nonexistent_code-seek_path"])
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("does not exist"));
+}
+
+
+#[test]
+fn scan_only_comments_go() {
+    let dir = std::env::temp_dir().join("code_seek_inttest_comments_go");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(
+        dir.join("main.go"),
+        b"// this is a comment\n// another line\n",
+    )
+    .unwrap();
+
+    let out = Command::new(bin())
+        .args(["scan", dir.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("0 entities"), "comment-only Go must show 0 entities");
+
+    fs::remove_dir_all(&dir).unwrap();
+}
+
+
+#[test]
+fn scan_only_comments_rs() {
+    let dir = std::env::temp_dir().join("code_seek_inttest_comments_rs");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("comments.rs"), b"// this is a comment\n// another line\n").unwrap();
+
+    let out = Command::new(bin())
+        .args(["scan", dir.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("0 entities"), "comment-only file must show 0 entities");
+
+    fs::remove_dir_all(&dir).unwrap();
+}
+
+
+#[test]
+fn scan_python_file() {
+    let dir = std::env::temp_dir().join("code_seek_inttest_py");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(
+        dir.join("app.py"),
+        "import os\ndef greet(name):\n    pass\nclass Greeter:\n    def hello(self):\n        pass\n",
+    )
+    .unwrap();
+
+    let out = Command::new(bin())
+        .args(["scan", dir.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("[Python]"));
+    assert!(stdout.contains("3 entities"));
+
+    fs::remove_dir_all(&dir).unwrap();
+}
+
+
+#[test]
+fn scan_qml_file() {
+    let dir = std::env::temp_dir().join("code_seek_inttest_qml");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(
+        dir.join("test.qml"),
+        "import QtQuick 2.0\nRectangle {\n    id: root\n    function reset() { }\n    function update(x) { }\n}",
+    ).unwrap();
+
+    let out = Command::new(bin())
+        .args(["scan", dir.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("[QML]"));
+    assert!(stdout.contains("3 entities"));
+
+    fs::remove_dir_all(&dir).unwrap();
+}
+
+
+#[test]
+fn scan_rust_file() {
+    let dir = std::env::temp_dir().join("code_seek_inttest_rust");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(
+        dir.join("test.rs"),
+        "fn hello() -> u32 { 42 }\nstruct Foo { x: i32 }\nimpl Foo { fn get(&self) -> i32 { self.x } }",
+    ).unwrap();
+
+    let out = Command::new(bin())
+        .args(["scan", dir.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("[Rust]"));
+    assert!(stdout.contains("4 entities"));
+
+    fs::remove_dir_all(&dir).unwrap();
+}
+
+
+#[test]
+fn scan_single_c_file() {
+    let file = std::env::temp_dir().join("code_seek_inttest_single.c");
+    fs::write(&file, "int add(int a, int b) { return a + b; }").unwrap();
+
+    let out = Command::new(bin())
+        .args(["scan", file.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("[C]"));
+    assert!(stdout.contains("1 entity"));
+
+    fs::remove_file(&file).unwrap();
+}
+
+
+#[test]
+fn scan_symlink_root_no_follow() {
+    use std::os::unix::fs::symlink;
+    let tmp = std::env::temp_dir().join("code_seek_inttest_symlink_root");
+    let _ = fs::remove_dir_all(&tmp);
+    fs::create_dir_all(tmp.join("real")).unwrap();
+    fs::write(tmp.join("real/main.rs"), b"fn main() {}").unwrap();
+    symlink(tmp.join("real"), tmp.join("link")).unwrap();
+
+    let out = Command::new(bin())
+        .args(["scan", tmp.join("link").to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("0 files"), "symlink root without follow must show 0 files");
+
+    fs::remove_dir_all(&tmp).unwrap();
+}
+
+#[test]
+fn scan_ts_file() {
+    let dir = std::env::temp_dir().join("code_seek_inttest_ts");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(
+        dir.join("app.ts"),
+        "import { api } from './api';\ninterface Store {\n  get(key: string): string;\n}\nenum Mode { On, Off }\nclass App implements Store {\n  get(key: string): string { return key; }\n}\n",
+    )
+    .unwrap();
+
+    let out = Command::new(bin())
+        .args(["scan", dir.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("[TypeScript]"));
+    assert!(stdout.contains("5 entities"));
+
+    fs::remove_dir_all(&dir).unwrap();
+}
+
+
+#[test]
+fn scan_uses_cache_on_second_run() {
+    let dir = std::env::temp_dir().join("code_seek_inttest_cache");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    fs::create_dir_all(dir.join(".code-seek")).unwrap();
+    fs::write(
+        dir.join("lib.rs"),
+        "fn add(a: i32, b: i32) -> i32 { a + b }\nstruct Point { x: f32 }",
+    )
+    .unwrap();
+
+    // First run — parses the file, writes cache
+    let out1 = Command::new(bin())
+        .args(["scan", "."])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(out1.status.success(), "first scan failed: {}", String::from_utf8_lossy(&out1.stderr));
+    let stdout1 = String::from_utf8_lossy(&out1.stdout).to_string();
+
+    let cache_path = dir.join(".code-seek/cache.json");
+    assert!(cache_path.exists(), "cache.json must be created after first scan");
+
+    let cache_contents = fs::read_to_string(&cache_path).unwrap();
+    let cache_json: serde_json::Value =
+        serde_json::from_str(&cache_contents).expect("cache is valid JSON");
+    assert!(
+        cache_json.as_object().map(|o| !o.is_empty()).unwrap_or(false),
+        "cache must contain entries",
+    );
+
+    // Second run — reads from cache, no re-parse
+    let out2 = Command::new(bin())
+        .args(["scan", "."])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(out2.status.success(), "second scan failed: {}", String::from_utf8_lossy(&out2.stderr));
+    let stdout2 = String::from_utf8_lossy(&out2.stdout).to_string();
+
+    assert_eq!(stdout1, stdout2, "cached scan must produce identical output");
+
+    fs::remove_dir_all(&dir).unwrap();
+}
+
+
 #[test]
 fn scan_with_ignore_flag_skips_dirs() {
     let dir = std::env::temp_dir().join("code_seek_inttest_ignore");
@@ -571,78 +856,3 @@ fn scan_with_ignore_flag_skips_dirs() {
     fs::remove_dir_all(&dir).unwrap();
 }
 
-#[test]
-fn scan_empty_rs_file() {
-    let dir = std::env::temp_dir().join("code_seek_inttest_empty_rs");
-    let _ = fs::remove_dir_all(&dir);
-    fs::create_dir_all(&dir).unwrap();
-    fs::write(dir.join("empty.rs"), b"").unwrap();
-
-    let out = Command::new(bin())
-        .args(["scan", dir.to_str().unwrap()])
-        .output()
-        .unwrap();
-    assert!(out.status.success());
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("0 entities"), "empty file must show 0 entities");
-    assert!(stdout.contains("0 LOC"), "empty file must show 0 LOC");
-
-    fs::remove_dir_all(&dir).unwrap();
-}
-
-#[test]
-fn scan_only_comments_rs() {
-    let dir = std::env::temp_dir().join("code_seek_inttest_comments_rs");
-    let _ = fs::remove_dir_all(&dir);
-    fs::create_dir_all(&dir).unwrap();
-    fs::write(dir.join("comments.rs"), b"// this is a comment\n// another line\n").unwrap();
-
-    let out = Command::new(bin())
-        .args(["scan", dir.to_str().unwrap()])
-        .output()
-        .unwrap();
-    assert!(out.status.success());
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("0 entities"), "comment-only file must show 0 entities");
-
-    fs::remove_dir_all(&dir).unwrap();
-}
-
-#[test]
-fn scan_invalid_lang_cli() {
-    let dir = std::env::temp_dir().join("code_seek_inttest_invalid_lang");
-    let _ = fs::remove_dir_all(&dir);
-    fs::create_dir_all(&dir).unwrap();
-    fs::write(dir.join("main.rs"), b"fn main() {}").unwrap();
-
-    let out = Command::new(bin())
-        .args(["scan", dir.to_str().unwrap(), "--lang", "python"])
-        .output()
-        .unwrap();
-    assert!(!out.status.success(), "invalid lang must fail");
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("python"), "error must mention the invalid lang");
-
-    fs::remove_dir_all(&dir).unwrap();
-}
-
-#[cfg(unix)]
-#[test]
-fn scan_symlink_root_no_follow() {
-    use std::os::unix::fs::symlink;
-    let tmp = std::env::temp_dir().join("code_seek_inttest_symlink_root");
-    let _ = fs::remove_dir_all(&tmp);
-    fs::create_dir_all(tmp.join("real")).unwrap();
-    fs::write(tmp.join("real/main.rs"), b"fn main() {}").unwrap();
-    symlink(tmp.join("real"), tmp.join("link")).unwrap();
-
-    let out = Command::new(bin())
-        .args(["scan", tmp.join("link").to_str().unwrap()])
-        .output()
-        .unwrap();
-    assert!(out.status.success());
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("0 files"), "symlink root without follow must show 0 files");
-
-    fs::remove_dir_all(&tmp).unwrap();
-}

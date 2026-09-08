@@ -91,6 +91,14 @@ fn has_traversal(path_str: &str) -> bool {
         .any(|c| c == std::path::Component::ParentDir)
 }
 
+fn validate_mcp_path(path_str: &str) -> Result<std::path::PathBuf, String> {
+    if has_traversal(path_str) {
+        return Err("path traversal not allowed".to_owned());
+    }
+    let path = std::path::Path::new(path_str);
+    path.canonicalize().map_err(|e| format!("invalid path: {e}"))
+}
+
 fn handle_scan(id: Value, args: &Value) -> Value {
     let Some(path_str) = args.get("path").and_then(|p| p.as_str()) else {
         return json!({
@@ -98,9 +106,10 @@ fn handle_scan(id: Value, args: &Value) -> Value {
             "error": {"code": -32602, "message": "Missing required argument: path"}
         });
     };
-    if has_traversal(path_str) {
-        return json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32602, "message": "path traversal not allowed"}});
-    }
+    let path = match validate_mcp_path(path_str) {
+        Ok(p) => p,
+        Err(e) => return json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32602, "message": e}}),
+    };
 
     let lang_filter: Vec<String> = args
         .get("lang")
@@ -114,11 +123,20 @@ fn handle_scan(id: Value, args: &Value) -> Value {
         .and_then(|i| i.as_str())
         .map(|s| s.split(',').map(str::trim).map(str::to_owned).collect())
         .unwrap_or_default();
-    let path = std::path::Path::new(path_str);
+    let info = args.get("info").and_then(|i| i.as_str()).unwrap_or("all");
 
-    match scan::build_scan_results(path, &lang_filter, match_pattern, max_depth, &extra_ignore) {
+    match scan::build_scan_results(&path, &lang_filter, match_pattern, max_depth, &extra_ignore, info) {
         Ok(results) => {
-            let text = serde_json::to_string(&scan::results_to_json(&results, path)).unwrap_or_default();
+            let text = match serde_json::to_string(&scan::results_to_json(&results, &path)) {
+                Ok(s) => s,
+                Err(e) => {
+                    let msg = format!("internal error: {e}");
+                    return json!({
+                        "jsonrpc": "2.0", "id": id,
+                        "error": {"code": -32603, "message": msg}
+                    });
+                }
+            };
             json!({"jsonrpc": "2.0", "id": id, "result": {"content": [{"type": "text", "text": text}]}})
         }
         Err(e) => {
@@ -140,15 +158,24 @@ fn handle_entity(id: Value, args: &Value) -> Value {
     }
 
     let file_path = entity_path.split(" > ").next().unwrap_or("");
-    if has_traversal(file_path) {
-        return json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32602, "message": "path traversal not allowed"}});
-    }
-    let path = std::path::Path::new(file_path);
+    let path = match validate_mcp_path(file_path) {
+        Ok(p) => p,
+        Err(e) => return json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32602, "message": e}}),
+    };
 
-    match scan::build_scan_results(path, &[], "", None, &[]) {
+    match scan::build_scan_results(&path, &[], "", None, &[], "all") {
         Ok(results) => match scan::find_entity(&results, entity_path) {
             Some(v) => {
-                let text = serde_json::to_string(&v).unwrap_or_default();
+                let text = match serde_json::to_string(&v) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        let msg = format!("internal error: {e}");
+                        return json!({
+                            "jsonrpc": "2.0", "id": id,
+                            "error": {"code": -32603, "message": msg}
+                        });
+                    }
+                };
                 json!({"jsonrpc": "2.0", "id": id, "result": {"content": [{"type": "text", "text": text}]}})
             }
             None => {
@@ -170,20 +197,29 @@ fn handle_summary(id: Value, args: &Value) -> Value {
             "error": {"code": -32602, "message": "Missing required argument: path"}
         });
     };
-    if has_traversal(path_str) {
-        return json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32602, "message": "path traversal not allowed"}});
-    }
+    let path = match validate_mcp_path(path_str) {
+        Ok(p) => p,
+        Err(e) => return json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32602, "message": e}}),
+    };
 
     let lang_filter: Vec<String> = args
         .get("lang")
         .and_then(|l| l.as_str())
         .map(|s| s.split(',').map(str::trim).map(str::to_owned).collect())
         .unwrap_or_default();
-    let path = std::path::Path::new(path_str);
 
-    match scan::build_scan_results(path, &lang_filter, "", None, &[]) {
+    match scan::build_scan_results(&path, &lang_filter, "", None, &[], "all") {
         Ok(results) => {
-            let text = serde_json::to_string(&scan::summarize(&results, path)).unwrap_or_default();
+            let text = match serde_json::to_string(&scan::summarize(&results, &path)) {
+                Ok(s) => s,
+                Err(e) => {
+                    let msg = format!("internal error: {e}");
+                    return json!({
+                        "jsonrpc": "2.0", "id": id,
+                        "error": {"code": -32603, "message": msg}
+                    });
+                }
+            };
             json!({"jsonrpc": "2.0", "id": id, "result": {"content": [{"type": "text", "text": text}]}})
         }
         Err(e) => {
@@ -206,25 +242,33 @@ fn handle_locate(id: Value, args: &Value) -> Value {
             "error": {"code": -32602, "message": "Missing required argument: path"}
         });
     };
-    if has_traversal(path_str) {
-        return json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32602, "message": "path traversal not allowed"}});
-    }
+    let path = match validate_mcp_path(path_str) {
+        Ok(p) => p,
+        Err(e) => return json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32602, "message": e}}),
+    };
 
     let lang_filter: Vec<String> = args
         .get("lang")
         .and_then(|l| l.as_str())
         .map(|s| s.split(',').map(str::trim).map(str::to_owned).collect())
         .unwrap_or_default();
-    let path = std::path::Path::new(path_str);
 
-    match scan::build_scan_results(path, &lang_filter, "", None, &[]) {
+    match scan::build_scan_results(&path, &lang_filter, "", None, &[], "all") {
         Ok(results) => {
             let matches = scan::locate(&results, name);
-            let text = serde_json::to_string(&serde_json::json!({
+            let text = match serde_json::to_string(&serde_json::json!({
                 "name": name,
                 "matches": matches,
-            }))
-            .unwrap_or_default();
+            })) {
+                Ok(s) => s,
+                Err(e) => {
+                    let msg = format!("internal error: {e}");
+                    return json!({
+                        "jsonrpc": "2.0", "id": id,
+                        "error": {"code": -32603, "message": msg}
+                    });
+                }
+            };
             json!({"jsonrpc": "2.0", "id": id, "result": {"content": [{"type": "text", "text": text}]}})
         }
         Err(e) => {
@@ -232,6 +276,14 @@ fn handle_locate(id: Value, args: &Value) -> Value {
             json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32000, "message": e.to_string()}})
         }
     }
+}
+
+fn lang_filter_description() -> String {
+    let aliases: Vec<&str> = crate::lang::LANGUAGES
+        .iter()
+        .flat_map(|l| l.aliases.iter().copied())
+        .collect();
+    format!("Comma-separated language filter: {}", aliases.join(", "))
 }
 
 fn scan_tool_def() -> Value {
@@ -247,7 +299,7 @@ fn scan_tool_def() -> Value {
                 },
                 "lang": {
                     "type": "string",
-                    "description": "Comma-separated language filter: c, cpp, c++, qml, rust"
+                    "description": lang_filter_description()
                 },
                 "match": {
                     "type": "string",
@@ -260,6 +312,10 @@ fn scan_tool_def() -> Value {
                 "ignore": {
                     "type": "string",
                     "description": "Comma-separated directory names to skip (e.g. \"target,node_modules\")"
+                },
+                "info": {
+                    "type": "string",
+                    "description": "Entity info filter: \"all\" (default), \"no-tests\" (exclude test modules), \"tests-only\" (show only test modules)"
                 }
             },
             "required": ["path"]
@@ -301,7 +357,7 @@ fn locate_tool_def() -> Value {
                 },
                 "lang": {
                     "type": "string",
-                    "description": "Comma-separated language filter: c, cpp, c++, qml, rust"
+                    "description": lang_filter_description()
                 }
             },
             "required": ["name", "path"]
@@ -322,7 +378,7 @@ fn summary_tool_def() -> Value {
                 },
                 "lang": {
                     "type": "string",
-                    "description": "Comma-separated language filter: c, cpp, c++, qml, rust"
+                    "description": lang_filter_description()
                 }
             },
             "required": ["path"]

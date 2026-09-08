@@ -1,24 +1,14 @@
 use tree_sitter::Node;
 
-use super::{LocMap, detect_syntax_errors, extract_imports_from_tree, node_lines, parse_source};
-use crate::model::{Dependency, DependencyKind, Entity, EntityType, SyntaxError};
+use super::{Context, LocMap, container_entity, leaf_entity, name_field};
+use crate::model::{Dependency, DependencyKind, Entity, EntityType};
 
-pub(super) fn parse_all(source: &str, loc_map: &LocMap) -> (Vec<Entity>, Vec<String>, Vec<SyntaxError>) {
-    let Some(tree) = parse_source(tree_sitter_qmljs::LANGUAGE.into(), source) else {
-        return (vec![], vec![], vec![]);
-    };
-    let mut entities = Vec::new();
-    let mut cursor = tree.root_node().walk();
-    for child in tree.root_node().children(&mut cursor) {
-        if child.kind() == "ui_object_definition"
-            && let Some(e) = parse_object(child, source, loc_map)
-        {
-            entities.push(e);
-        }
+pub(super) fn parse_node(node: Node<'_>, source: &str, loc_map: &LocMap, _context: Context, _depth: usize) -> Option<Entity> {
+    if node.kind() == "ui_object_definition" {
+        parse_object(node, source, loc_map)
+    } else {
+        None
     }
-    let imports = extract_imports_from_tree(&tree, source, &["ui_import"]);
-    let errors = detect_syntax_errors(&tree);
-    (entities, imports, errors)
 }
 
 fn parse_object(node: Node<'_>, source: &str, loc_map: &LocMap) -> Option<Entity> {
@@ -50,15 +40,7 @@ fn parse_object(node: Node<'_>, source: &str, loc_map: &LocMap) -> Option<Entity
     methods.sort_by(|a, b| a.name.cmp(&b.name));
 
     let name = id_name.unwrap_or(type_name);
-    let (start_line, end_line) = node_lines(node);
-    Some(Entity {
-        name,
-        entity_type: EntityType::Class,
-        loc: loc_map.count(start_line, end_line),
-        start_line,
-        end_line,
-        children: methods,
-    })
+    Some(container_entity(node, name, EntityType::Class, loc_map, methods))
 }
 
 fn extract_id(binding: &Node<'_>, src: &[u8]) -> Option<String> {
@@ -71,19 +53,8 @@ fn extract_id(binding: &Node<'_>, src: &[u8]) -> Option<String> {
 }
 
 fn parse_function(node: Node<'_>, source: &str, loc_map: &LocMap) -> Option<Entity> {
-    let src = source.as_bytes();
-    let name = node
-        .child_by_field_name("name")
-        .and_then(|n| n.utf8_text(src).ok())
-        .map(str::to_owned)?;
-    let (start_line, end_line) = node_lines(node);
-    Some(Entity::new(
-        name,
-        EntityType::Method,
-        loc_map.count(start_line, end_line),
-        start_line,
-        end_line,
-    ))
+    let name = name_field(node, source.as_bytes())?;
+    Some(leaf_entity(node, name, EntityType::Method, loc_map))
 }
 
 pub(super) fn resolve_imports(
@@ -93,13 +64,13 @@ pub(super) fn resolve_imports(
     imports
         .iter()
         .filter_map(|raw| {
-            let raw = raw.trim().strip_prefix("import ")?.trim().trim_matches('"');
-            if raw.starts_with("./") || raw.starts_with("../") {
-                Some(Dependency { name: raw.to_owned(), kind: DependencyKind::Internal })
-            } else {
-                let name = raw.split_whitespace().next()?.to_owned();
-                Some(Dependency { name, kind: DependencyKind::External })
+            let raw = raw.trim().strip_prefix("import ")?.trim();
+            if let Some(quoted) = raw.split('"').nth(1) {
+                let name = quoted.to_owned();
+                return Some(Dependency { name, kind: DependencyKind::Internal });
             }
+            let name = raw.split_whitespace().next()?.to_owned();
+            Some(Dependency { name, kind: DependencyKind::External })
         })
         .collect()
 }
@@ -109,8 +80,8 @@ mod tests {
     use super::*;
     use crate::model::EntityType;
 
-    fn entities(s: &str) -> Vec<Entity> { parse_all(s, &LocMap::build(s)).0 }
-    fn imports(s: &str) -> Vec<String> { parse_all(s, &LocMap::build(s)).1 }
+    fn entities(s: &str) -> Vec<Entity> { crate::lang::test_parse("QML", s).entities }
+    fn imports(s: &str) -> Vec<String> { crate::lang::test_parse("QML", s).imports }
 
     #[test]
     fn parses_object_with_id() {
@@ -183,5 +154,20 @@ mod tests {
         assert_eq!(deps[0].kind, DependencyKind::External);
         assert_eq!(deps[1].name, "./components");
         assert_eq!(deps[1].kind, DependencyKind::Internal);
+    }
+
+    #[test]
+    fn resolves_imports_with_alias() {
+        let imports = vec![
+            "import \"path/to/local\" as MyModule".into(),
+            "import QtQuick 2.15".into(),
+        ];
+        let project = std::collections::HashSet::new();
+        let deps = resolve_imports(&imports, &project);
+        assert_eq!(deps.len(), 2);
+        assert_eq!(deps[0].name, "path/to/local");
+        assert_eq!(deps[0].kind, DependencyKind::Internal);
+        assert_eq!(deps[1].name, "QtQuick");
+        assert_eq!(deps[1].kind, DependencyKind::External);
     }
 }

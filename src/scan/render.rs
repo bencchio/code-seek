@@ -3,6 +3,7 @@ use crate::{
     model::{DependencyKind, Entity, EntityType, FileResult, SyntaxError},
 };
 use std::path::Path;
+use unicode_width::UnicodeWidthStr;
 
 // ── Tree output ───────────────────────────────────────────────────────────────
 
@@ -63,8 +64,9 @@ pub(super) fn print_tree(results: &[FileResult]) {
 }
 
 fn print_entities(entities: &[Entity], prefix: &str, col: usize, lw: usize, rw: usize, errors: &[SyntaxError]) {
+    let count = entities.len();
     for (i, e) in entities.iter().enumerate() {
-        let is_last = i == entities.len() - 1;
+        let is_last = i + 1 == count;
         let connector = if is_last { "└─" } else { "├─" };
         let label = format!(
             "{}{} {} {}",
@@ -274,7 +276,7 @@ fn plural(n: usize, singular: &str, many: &str) -> String {
 }
 
 fn char_width(s: &str) -> usize {
-    s.chars().count()
+    UnicodeWidthStr::width(s)
 }
 
 fn lang_icon(language: &str) -> &'static str {

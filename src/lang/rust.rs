@@ -2,131 +2,34 @@ use std::path::Path;
 
 use tree_sitter::Node;
 
-use super::{LocMap, collect_children, detect_syntax_errors, extract_imports_from_tree, node_lines, parse_source};
-use crate::model::{Dependency, DependencyKind, Entity, EntityType, SyntaxError};
+use super::{Context, LocMap, body_children, collect_children, container_entity, leaf_entity, name_field};
+use crate::model::{Dependency, DependencyKind, Entity, EntityType};
 
-pub(super) fn parse_all(source: &str, loc_map: &LocMap) -> (Vec<Entity>, Vec<String>, Vec<SyntaxError>) {
-    let Some(tree) = parse_source(tree_sitter_rust::LANGUAGE.into(), source) else {
-        return (vec![], vec![], vec![]);
-    };
-    let entities = collect_children(tree.root_node(), source, loc_map, false, 0, parse_node);
-    let imports = extract_imports_from_tree(
-        &tree,
-        source,
-        &["use_declaration", "extern_crate_declaration"],
-    );
-    let errors = detect_syntax_errors(&tree);
-    (entities, imports, errors)
-}
-
-fn parse_node(
-    node: Node<'_>,
-    source: &str,
-    loc_map: &LocMap,
-    in_impl: bool,
-    depth: usize,
-) -> Option<Entity> {
+pub(super) fn parse_node(node: Node<'_>, source: &str, loc_map: &LocMap, context: Context, depth: usize) -> Option<Entity> {
     let src = source.as_bytes();
     match node.kind() {
         "function_item" | "function_signature_item" => {
-            let name = node
-                .child_by_field_name("name")
-                .and_then(|n| n.utf8_text(src).ok())
-                .map(str::to_owned)?;
-            let (start_line, end_line) = node_lines(node);
-            let entity_type = if in_impl { EntityType::Method } else { EntityType::Function };
-            Some(Entity::new(
-                name,
-                entity_type,
-                loc_map.count(start_line, end_line),
-                start_line,
-                end_line,
-            ))
+            let entity_type = if context == Context::TypeBody { EntityType::Method } else { EntityType::Function };
+            Some(leaf_entity(node, name_field(node, src)?, entity_type, loc_map))
         }
-        "struct_item" => {
-            let name = node
-                .child_by_field_name("name")
-                .and_then(|n| n.utf8_text(src).ok())
-                .map(str::to_owned)?;
-            let (start_line, end_line) = node_lines(node);
-            Some(Entity::new(
-                name,
-                EntityType::Struct,
-                loc_map.count(start_line, end_line),
-                start_line,
-                end_line,
-            ))
-        }
-        "enum_item" => {
-            let name = node
-                .child_by_field_name("name")
-                .and_then(|n| n.utf8_text(src).ok())
-                .map(str::to_owned)?;
-            let (start_line, end_line) = node_lines(node);
-            Some(Entity::new(
-                name,
-                EntityType::Enum,
-                loc_map.count(start_line, end_line),
-                start_line,
-                end_line,
-            ))
-        }
+        "struct_item" => Some(leaf_entity(node, name_field(node, src)?, EntityType::Struct, loc_map)),
+        "enum_item" => Some(leaf_entity(node, name_field(node, src)?, EntityType::Enum, loc_map)),
         "impl_item" => {
             let name = impl_target_type(node, src)?;
-            let (start_line, end_line) = node_lines(node);
-            let children = node
-                .child_by_field_name("body")
-                .map(|body| {
-                    collect_children(body, source, loc_map, true, depth + 1, parse_node)
-                })
-                .unwrap_or_default();
-            Some(Entity {
-                name,
-                entity_type: EntityType::Impl,
-                loc: loc_map.count(start_line, end_line),
-                start_line,
-                end_line,
-                children,
-            })
+            let children = body_children(node, source, loc_map, Context::TypeBody, depth, parse_node);
+            Some(container_entity(node, name, EntityType::Impl, loc_map, children))
         }
         "trait_item" => {
-            let name = node
-                .child_by_field_name("name")
-                .and_then(|n| n.utf8_text(src).ok())
-                .map(str::to_owned)?;
-            let (start_line, end_line) = node_lines(node);
-            let children = node
-                .child_by_field_name("body")
-                .map(|body| {
-                    collect_children(body, source, loc_map, true, depth + 1, parse_node)
-                })
-                .unwrap_or_default();
-            Some(Entity {
-                name,
-                entity_type: EntityType::Trait,
-                loc: loc_map.count(start_line, end_line),
-                start_line,
-                end_line,
-                children,
-            })
+            let name = name_field(node, src)?;
+            let children = body_children(node, source, loc_map, Context::TypeBody, depth, parse_node);
+            Some(container_entity(node, name, EntityType::Trait, loc_map, children))
         }
         "mod_item" => {
+            // `mod foo;` has no body and declares nothing to show here
             let body = node.child_by_field_name("body")?;
-            let name = node
-                .child_by_field_name("name")
-                .and_then(|n| n.utf8_text(src).ok())
-                .map(str::to_owned)?;
-            let (start_line, end_line) = node_lines(node);
-            let children =
-                collect_children(body, source, loc_map, false, depth + 1, parse_node);
-            Some(Entity {
-                name,
-                entity_type: EntityType::Namespace,
-                loc: loc_map.count(start_line, end_line),
-                start_line,
-                end_line,
-                children,
-            })
+            let name = name_field(node, src)?;
+            let children = collect_children(body, source, loc_map, Context::TopLevel, depth + 1, parse_node);
+            Some(container_entity(node, name, EntityType::Namespace, loc_map, children))
         }
         _ => None,
     }
@@ -209,8 +112,8 @@ mod tests {
     use super::*;
     use crate::model::EntityType;
 
-    fn parse(src: &str) -> Vec<Entity> { parse_all(src, &LocMap::build(src)).0 }
-    fn imports(src: &str) -> Vec<String> { parse_all(src, &LocMap::build(src)).1 }
+    fn parse(src: &str) -> Vec<Entity> { crate::lang::test_parse("Rust", src).entities }
+    fn imports(src: &str) -> Vec<String> { crate::lang::test_parse("Rust", src).imports }
 
     #[test]
     fn parses_function() {

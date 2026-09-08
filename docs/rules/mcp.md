@@ -10,7 +10,20 @@
 
 ### Claude Code
 
-Add to `.claude/settings.json` in the project root (or `~/.claude/settings.json` for global access):
+Register the server with the `claude mcp` CLI:
+
+```bash
+# Current project only (default, stored in project-local config):
+claude mcp add code-seek -- code-seek mcp
+
+# Shared with everyone working on the repo (writes .mcp.json at the repo root):
+claude mcp add --scope project code-seek -- code-seek mcp
+
+# Available in all your projects:
+claude mcp add --scope user code-seek -- code-seek mcp
+```
+
+Or write `.mcp.json` at the project root by hand:
 
 ```json
 {
@@ -23,18 +36,22 @@ Add to `.claude/settings.json` in the project root (or `~/.claude/settings.json`
 }
 ```
 
+Note: MCP servers do **not** go in `.claude/settings.json` — Claude Code reads them from `.mcp.json` (project scope) or its own user config, both managed by `claude mcp add`.
+
 If `code-seek` is not on `PATH`, use the full path to the binary:
 
-```json
-{
-  "mcpServers": {
-    "code-seek": {
-      "command": "/usr/local/bin/code-seek",
-      "args": ["mcp"]
-    }
-  }
-}
+```bash
+claude mcp add code-seek -- /home/you/.cargo/bin/code-seek mcp
 ```
+
+After `cargo install --path .`, the binary is at `~/.cargo/bin/code-seek`. If Claude Code reports that it cannot find the command, that directory is probably not on `PATH`. Verify with:
+
+```bash
+which code-seek          # should print /usr/local/bin/code-seek or ~/.cargo/bin/code-seek
+echo $PATH | tr : '\n' | grep cargo   # should print ~/.cargo/bin
+```
+
+Restart Claude Code and confirm with `/mcp` that `code-seek` is listed as connected.
 
 ### OpenCode
 
@@ -61,9 +78,11 @@ Returns the entity structure of a directory or file as JSON. Same schema as `cod
 | Argument    | Type    | Required | Description |
 |-------------|---------|----------|-------------|
 | `path`      | string  | yes      | Directory or file path to scan |
-| `lang`      | string  | no       | Comma-separated language filter: `c`, `cpp`, `c++`, `qml`, `rust` |
+| `lang`      | string  | no       | Comma-separated language filter (any name or alias): `c`, `cpp`, `c++`, `go`, `golang`, `js`, `javascript`, `python`, `py`, `qml`, `rust`, `ts`, `typescript` |
 | `match`     | string  | no       | Case-insensitive substring filter on entity name; parents with matching children are preserved |
 | `max_depth` | integer | no       | Hard depth ceiling: `0` = file headers only, `1` = root entities, `2` = roots + direct children |
+| `ignore`    | string  | no       | Comma-separated directory names to skip (e.g. `"target,node_modules"`) |
+| `info`      | string  | no       | Entity info filter: `"all"` (default), `"no-tests"` (exclude test modules), `"tests-only"` (show only test modules) |
 
 See `docs/reference/SPECS.md` for the full JSON schema.
 
@@ -84,7 +103,7 @@ Returns aggregate counts for a path — total files, LOC, and entities, grouped 
 | Argument | Type   | Required | Description |
 |----------|--------|----------|-------------|
 | `path`   | string | yes      | Directory or file path to scan |
-| `lang`   | string | no       | Comma-separated language filter: `c`, `cpp`, `c++`, `qml`, `rust` |
+| `lang`   | string | no       | Comma-separated language filter (any name or alias): `c`, `cpp`, `c++`, `go`, `golang`, `js`, `javascript`, `python`, `py`, `qml`, `rust`, `ts`, `typescript` |
 
 Response fields: `scan_path`, `total_files`, `total_loc`, `total_entities`, `by_language` (alphabetical), `by_entity_type` (alphabetical).
 
@@ -96,7 +115,7 @@ Search for an entity by name across a directory. Returns all matches with their 
 |----------|--------|----------|-------------|
 | `name`   | string | yes      | Entity name to search for (case-insensitive) |
 | `path`   | string | yes      | Directory or file path to search in |
-| `lang`   | string | no       | Comma-separated language filter: `c`, `cpp`, `c++`, `qml`, `rust` |
+| `lang`   | string | no       | Comma-separated language filter (any name or alias): `c`, `cpp`, `c++`, `go`, `golang`, `js`, `javascript`, `python`, `py`, `qml`, `rust`, `ts`, `typescript` |
 
 Response fields: `name`, `matches[]` with `entity_path`, `entity_type`, `loc`, `start_line`, `end_line` per match.
 
@@ -107,7 +126,7 @@ Notifications have no `id` and receive no response.
 
 ```
 → {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"claude-code","version":"1.0"}}}
-← {"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2024-11-05","capabilities":{"tools":{}},"serverInfo":{"name":"code-seek","version":"0.2.7"}}}
+← {"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2024-11-05","capabilities":{"tools":{}},"serverInfo":{"name":"code-seek","version":"<code-seek-version>"}}}
 
 → {"jsonrpc":"2.0","method":"notifications/initialized"}
   (no response)
@@ -121,7 +140,7 @@ Notifications have no `id` and receive no response.
 ]}}
 
 → {"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"scan","arguments":{"path":"src/","lang":"rust","match":"parse"}}}
-← {"jsonrpc":"2.0","id":3,"result":{"content":[{"type":"text","text":"{\"version\":\"0.2.7\",\"scan_path\":\"src/\",\"total_files\":6,\"total_entities\":12,...}"}]}}
+← {"jsonrpc":"2.0","id":3,"result":{"content":[{"type":"text","text":"{\"version\":\"<code-seek-version>\",\"scan_path\":\"src/\",\"total_files\":6,\"total_entities\":12,...}"}]}}
 
 → {"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"entity","arguments":{"entity_path":"src/scan.rs > filter_entities"}}}
 ← {"jsonrpc":"2.0","id":4,"result":{"content":[{"type":"text","text":"{\"name\":\"filter_entities\",\"entity_type\":\"Function\",\"loc\":20,\"start_line\":285,\"end_line\":304,\"children\":[]}"}]}}
@@ -179,3 +198,36 @@ Returns only root-level entities (no nested methods/children), one line per func
 - Protocol version is negotiated with the client on `initialize` — echoes the client's version when supported, falls back to `"2024-11-05"`
 - `serverInfo.version` uses `env!("CARGO_PKG_VERSION")` — always reflects the binary version
 - Empty or invalid JSON lines are logged as warnings and skipped
+
+## Troubleshooting
+
+### Test the server manually
+
+Pipe a single JSON-RPC `initialize` message to the binary. The server responds on stdout and logs to stderr:
+
+```bash
+echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}' \
+  | code-seek mcp
+```
+
+Expected response (one JSON line on stdout):
+
+```json
+{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2024-11-05","capabilities":{"tools":{}},"serverInfo":{"name":"code-seek","version":"<code-seek-version>"}}}
+```
+
+If you see no output, the binary is not found. If you see an error, check stderr.
+
+### MCP server not recognized by Claude Code
+
+1. Confirm `code-seek` is on `PATH`: `which code-seek`
+2. Restart Claude Code after editing `settings.json` — MCP servers are loaded at startup
+3. Use the absolute binary path in the config if PATH is not set in Claude Code's environment:
+   ```json
+   { "command": "/home/you/.cargo/bin/code-seek", "args": ["mcp"] }
+   ```
+4. All code-seek logs go to **stderr**. Claude Code captures stderr separately — check its MCP log output if available.
+
+### `code-seek init` is not required for MCP
+
+`code-seek mcp` works without a `.code-seek/config.toml` file. The cache is silently skipped if the config is absent.

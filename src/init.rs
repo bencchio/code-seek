@@ -1,9 +1,7 @@
 use std::fs;
 use std::path::Path;
 
-const DEFAULT_CONFIG: &str = r#"version = "0.1"
-
-[scan]
+const DEFAULT_CONFIG: &str = r#"[scan]
 follow_symlinks = false
 max_file_size_mb = 10
 ignore_dirs = [

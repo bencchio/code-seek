@@ -4,35 +4,46 @@ Explore the functional structure of a repository from the CLI.
 
 - **Structural tree**: classes, methods, functions, structs, traits, enums,
   components, with LOC and line numbers.
-- **Multi-language**: C, C++, Rust, QML.
+- **Multi-language**: C, C++, Go, JavaScript, Python, Rust, TypeScript, QML.
 - **Error-tolerant**: partially parses even with invalid code.
 
 ## Status
 
-**v0.4.0** — First public release candidate. Closes the 0.3.x cycle
-(Dependencies & robustness). All planned features complete: entity tree,
-JSON output, multi-language parsing, import/dependency/error detection,
-SHA-256 cache, MCP server, and CLI filters.
+**v0.5.0** — Security audit & documentation. Path traversal protection
+in MCP, cache symlink attack prevention, TOCTOU fixes, proper JSON-RPC
+error responses, and `main() -> Result`. Roadmap restructured into 0.5.x
+(CLI) and 0.6.x (agent tools) cycles.
 
-**v0.3.4** — Stabilization. `--ignore` CLI flag and MCP `ignore` parameter to skip
-directories at runtime. Dead code removed. Last production panic eliminated.
-
-See [`docs/rules/mcp.md`](docs/rules/mcp.md) for MCP setup.
+See [`docs/rules/mcp.md`](docs/rules/mcp.md) for MCP setup and
+the project backlog for the plan.
 
 ## Installation
 
-**Requirements:** Rust toolchain (stable).
+**Requirements:** Rust toolchain (stable). If you don't have Rust installed:
 
 ```bash
-# Build release binary and install system-wide
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+# Then restart your shell or run: source ~/.cargo/env
+```
+
+**Option A — install system-wide:**
+
+```bash
 cargo build --release
 sudo cp target/release/code-seek /usr/local/bin/code-seek
 ```
 
-Or install into `~/.cargo/bin` (must be on `PATH`):
+**Option B — install to `~/.cargo/bin`:**
 
 ```bash
 cargo install --path .
+```
+
+`~/.cargo/bin` must be on your `PATH`. If `code-seek --version` fails after install, add it:
+
+```bash
+echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> ~/.bashrc  # or ~/.zshrc
+source ~/.bashrc
 ```
 
 Verify:
@@ -69,6 +80,8 @@ Use `code-seek scan <path>` to explore the structure of any file or directory be
 - Filter by language: `code-seek scan . --lang rust`
 - Find an entity by name: `code-seek scan . --match parse`
 - Limit tree depth: `code-seek scan . --max-depth 1`
+- Exclude test modules: `code-seek scan . --info no-tests`
+- Only test modules: `code-seek scan . --info tests-only`
 
 Prefer `--max-depth 1` for a fast first pass on large directories.
 ```
@@ -104,4 +117,4 @@ See [`docs/rules/mcp.md`](docs/rules/mcp.md) for setup instructions (Claude Code
 
 ## Supported languages
 
-C · C++ · Rust · QML
+C · C++ · Go · JavaScript · Python · Rust · TypeScript · QML

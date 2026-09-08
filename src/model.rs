@@ -42,6 +42,29 @@ pub(crate) struct Entity {
     pub(crate) children: Vec<Entity>,
 }
 
+impl Entity {
+    pub(crate) fn new(
+        name: String,
+        entity_type: EntityType,
+        loc: usize,
+        start_line: usize,
+        end_line: usize,
+    ) -> Self {
+        Self { name, entity_type, loc, start_line, end_line, children: Vec::new() }
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct FileResult {
+    pub(crate) path: PathBuf,
+    pub(crate) language: &'static str,
+    pub(crate) loc: usize,
+    pub(crate) entities: Vec<Entity>,
+    pub(crate) imports: Vec<String>,
+    pub(crate) dependencies: Vec<Dependency>,
+    pub(crate) errors: Vec<SyntaxError>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -77,27 +100,4 @@ mod tests {
         assert!(r.entities.is_empty());
         assert!(r.errors.is_empty());
     }
-}
-
-impl Entity {
-    pub(crate) fn new(
-        name: String,
-        entity_type: EntityType,
-        loc: usize,
-        start_line: usize,
-        end_line: usize,
-    ) -> Self {
-        Self { name, entity_type, loc, start_line, end_line, children: Vec::new() }
-    }
-}
-
-#[derive(Debug)]
-pub(crate) struct FileResult {
-    pub(crate) path: PathBuf,
-    pub(crate) language: &'static str,
-    pub(crate) loc: usize,
-    pub(crate) entities: Vec<Entity>,
-    pub(crate) imports: Vec<String>,
-    pub(crate) dependencies: Vec<Dependency>,
-    pub(crate) errors: Vec<SyntaxError>,
 }

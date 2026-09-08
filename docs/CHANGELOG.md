@@ -2,6 +2,179 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.5.0] — 2026-07-14
+
+Security audit, documentation, and roadmap 0.5.
+
+### Security
+
+- **MCP path traversal protection** (`src/mcp.rs`): all four MCP tools (`scan`, `entity`, `summary`, `locate`) now canonicalize user-provided paths and reject `..` traversal. Paths that fail canonicalization return a clear JSON-RPC error instead of proceeding.
+- **Cache symlink attack prevention** (`src/cache.rs`): `resolve_cache_path` now returns `Option<PathBuf>`; when `.code-seek/cache.json` is a symlink pointing outside the project directory, the cache is skipped entirely (both load and save). Previously only emitted a warning but still followed the symlink.
+- **TOCTOU in file size check** (`src/scan/mod.rs`): file size is now verified against the already-loaded content instead of a pre-read `fs::metadata()` call, eliminating the race window where a file could be swapped between size check and read.
+- **JSON-RPC serialization failures** (`src/mcp.rs`): `serde_json::to_string` failures now return a proper JSON-RPC error (`-32603`) with the error message, instead of silently returning an empty string.
+
+### Changed
+
+- **`main() -> Result`** (`src/main.rs`): CLI entry point now returns `Result<(), Box<dyn std::error::Error>>` instead of calling `process::exit()` directly.
+- **`walker.rs` warning logging** (`src/walker.rs`): `walk_dir` now uses `crate::log::warn` for unreadable directory warnings instead of a bare `eprintln!`, consistent with all other modules.
+- **`unicode-width`** (`src/scan/render.rs`): `char_width` now uses `UnicodeWidthStr::width` instead of `chars().count()` for correct terminal column alignment with CJK characters and emoji in file paths and entity names.
+- **`init` config template** (`src/init.rs`): removed the vestigial `version = "0.1"` field from the generated `.code-seek/config.toml`; the `Config` struct has no `version` field and was silently ignoring it.
+- **`model.rs` structure** (`src/model.rs`): moved `impl Entity` and `FileResult` before `#[cfg(test)]` so all types are defined before the test module that uses them.
+
+### Documentation
+
+- **`docs/ROADMAP.md`**: restructured into three cycles — 0.5.x (CLI & change visualization), 0.6.x (agent tools), and post-0.6.x (advanced analysis & platform). Each cycle has 5 planned features.
+- **`README.md`**: status updated to v0.5.0; Go added to supported languages list.
+- **`docs/reference/SPECS.md`**: version bumped to 0.5.0; planned sections realigned.
+- **`docs/CHECKLIST.md`**: cycle 0.5.x entry added.
+
+## [0.4.99] — 2026-07-10
+
+Stabilization — closes the 0.4.x cycle.
+
+### Added
+
+- **5 new integration tests** (`tests/scan.rs`): `filter_combined_match_and_depth`, `filter_empty_match_shows_file_header`, `filter_match_includes_matching_excludes_others`, `filter_match_preserves_parent_impl`, `filter_max_depth_truncates_children` — cover all `--match`/`--max-depth` combinations end-to-end via the compiled binary.
+- **3 new Go unit tests** (`src/lang/go.rs`): `parses_only_package` (package-only source returns no entities), `skips_type_alias` (`type X = string` is not emitted), `detect_go` in `src/lang/mod.rs`.
+
+### Fixed
+
+- **Duplicate test removed** (`src/lang/go.rs`): `parses_struct_with_fields` was identical to `parses_struct`; removed.
+
+### Changed
+
+- **Let-chain refactoring** (`src/cache.rs`, `src/lang/go.rs`): nested `if let` + `if` patterns rewritten as Rust-2024 let-chains (`&&`); no behavior change.
+- **Test order** (`src/lang/go.rs`, `src/lang/mod.rs`): unit tests sorted alphabetically within their `mod tests` block.
+
+### Documentation
+
+- `docs/reference/SPECS.md`: version bumped to 0.4.99; Go added to supported-languages list, `--lang` flag table, walker extensions, and Nerd Font icon table.
+- `docs/reference/schema.json`: `"Go"` added to the `language` enum.
+- `docs/rules/mcp.md`: `go`/`golang` added to the `lang` filter description for `scan`, `summary`, and `locate` tools.
+
+## [0.4.6] — 2026-07-10
+
+Go parser.
+
+### Added
+
+- **Go parser** (`src/lang/go.rs`): extracts `Function`, `Method`, `Struct`, and `Trait` (Go interface) entities from `.go` files. Handles `function_declaration`, `method_declaration`, `type_declaration` → `type_spec` → `struct_type`/`interface_type` (with `method_elem` children). Import detection via `import_declaration`, including grouped `import (...)` blocks, aliases, and paths. Relative imports (`./`, `../`) resolved as `Internal`; all other imports as `External`.
+
+### Tests
+
+- 15 new unit tests in `src/lang/go.rs`.
+- 1 new integration test: `scan_go_file`.
+
+## [0.4.5] — 2026-07-07
+
+Language infrastructure refactor. No behavior changes; all existing test assertions unchanged.
+
+### Changed
+
+- **Generic parse pipeline** (`lang/mod.rs`): per-language `parse_all` functions removed. `LangDef` now carries `grammar`, `import_kinds`, `parse_node`, and `resolve_imports`; a single `run_parser` implements parse → entities → imports → errors for every language. Registering a language is now a single `LANGUAGES` entry plus one parser file.
+- **`resolve_imports` dispatch** moved from a manual per-language `match` into the `LangDef` field.
+- **Entity construction helpers** (`name_field`, `leaf_entity`, `container_entity`, `body_children`): replace ~20 repeated "name field → node lines → LOC count → Entity" blocks across all parsers.
+- **JS/TS unified**: `js::parse_common` holds the shared node handling (functions, classes, methods, arrow functions, `export` wrappers) with a `recurse` callback; `ts.rs` keeps only TS-specific cases (interface, enum, namespace, abstract class, method signatures). TypeScript's `LangDef` reuses `js::resolve_imports` directly.
+- **C/C++ unified** (`lang/c_family.rs`): shared `function_entity` (Function/Method by context), `unwrap_declaration`, and `resolve_includes` (previously byte-identical in `c.rs` and `cpp.rs`).
+- **Shared path classifier** (`classify_path`): relative-prefix → `Internal`, otherwise `External`; used by JS/TS and Python.
+- **`ParseOutput` struct**: replaces the `(Vec<Entity>, Vec<String>, Vec<SyntaxError>)` tuple.
+- **`Context` enum** (`TopLevel`/`TypeBody`): replaces the opaque `in_class: bool` threaded through the walk.
+
+### Tests
+
+- 1 new unit test: `every_language_runs_through_the_generic_driver`.
+- Parser unit tests now exercise the full pipeline via `test_parse`; C/C++/TS import-resolution tests now go through `lang::resolve_imports`, covering the `LangDef` wiring.
+
+### Fixed
+
+- **MCP: stale `lang` filter description** — the `scan`/`summary`/`locate` tool schemas listed `c, cpp, c++, js, py, qml, rust`, omitting the JS/Python aliases and TypeScript entirely. Now generated at runtime from the language registry (`lang_filter_description()`), so new languages can no longer drift.
+
+### Documentation
+
+- `docs/rules/parsers.md`: new Parse Pipeline section; Shared Helpers and Adding a Language rewritten for the `LangDef`-driven structure.
+- `docs/rules/mcp.md`: Claude Code setup corrected — MCP servers are registered via `claude mcp add` / `.mcp.json`, not `.claude/settings.json`; added scope examples and `/mcp` verification step. `lang` filter tables updated with all names/aliases. Stale `0.2.7` in the scan response example replaced with `<code-seek-version>`.
+- Reference docs caught up from 0.4.1 to 0.4.5: `SPECS.md` (status, language list incl. JS/TS/Python columns in the entity model table, `--lang`/`--info` flags, walker extensions, icons, future section), `ARCHITECTURE.md` (`scan/` module split, `LangDef` pipeline, parser module list), `DEPENDENCIES.md` (JS/Python/TS grammar crates, dev-dependencies note), `schema.json` (language enum).
+- `CHECKLIST.md`: added Cycle 0.4.x table (0.4.2–0.4.5).
+
+## [0.4.4] — 2026-07-07
+
+TypeScript parser.
+
+### Added
+
+- **TypeScript parser** (`src/lang/ts.rs`): extracts entities from `.ts`, `.mts`, `.cts` files. Handles `function_declaration`, `class_declaration` and `abstract_class_declaration` (with methods, including `abstract_method_signature`), `interface_declaration` (mapped to `Trait`, with `method_signature` children), `enum_declaration`, `internal_module` (`namespace X {}`, mapped to `Namespace`, with nested entities), typed `const`/`let` arrow function assignments, and `export` wrappers. Type aliases are skipped (no matching entity type). ES module import detection (`import_statement`, including `import type`). Import resolution reuses the JavaScript resolver (same ES module semantics): relative imports as `Internal`, package imports as `External`. `.tsx` is not covered (requires the separate TSX grammar).
+
+### Tests
+
+- 15 new unit tests in `src/lang/ts.rs`.
+- 1 new integration test: `scan_ts_file`.
+- 1 new `detect_typescript` test in `src/lang/mod.rs`; `detect_unknown` now uses `.tsx` as its unknown-extension case.
+
+## [0.4.3] — 2026-07-03
+
+Python parser.
+
+### Added
+
+- **Python parser** (`src/lang/python.rs`): extracts `Function`, `Class`, and `Method` entities from `.py` and `.pyw` files. Handles `function_definition`, `async_function_definition`, `class_definition` (with methods), and `decorated_definition` wrappers. Import detection via `import_statement` and `import_from_statement`. Relative imports (`from .module`) resolved as `Internal`; absolute imports as `External`. Multi-name `import a, b, c` and `as` aliases supported.
+
+### Tests
+
+- 10 new unit tests in `src/lang/python.rs`.
+- 1 new integration test: `scan_python_file`.
+- 1 new `detect_python` test in `src/lang/mod.rs`.
+
+## [0.4.2] — 2026-07-03
+
+JavaScript parser.
+
+### Added
+
+- **JavaScript parser** (`src/lang/js.rs`): extracts `Function`, `Class`, and `Method` entities from `.js`, `.mjs`, `.cjs` files. Handles `function_declaration`, `class_declaration` (with methods), `const`/`let` arrow function assignments, and `export` wrappers. ES module import detection (`import_statement`). Relative imports resolved as `Internal`; package imports as `External`.
+
+### Fixed
+
+- **MCP docs: stale version** — session example now shows `<code-seek-version>` instead of hardcoded `0.2.7`.
+- **MCP docs: `ignore` param undocumented** — added to the `scan` tool reference table.
+
+### Documentation
+
+- `docs/rules/mcp.md`: added PATH verification steps, manual server test instructions, and a troubleshooting section.
+- `README.md`: added Rust/rustup install instructions and `~/.cargo/bin` PATH guidance.
+
+### Tests
+
+- 10 new unit tests in `src/lang/js.rs`.
+- 1 new integration test: `scan_js_file`.
+- 1 new `detect_javascript` test in `src/lang/mod.rs`.
+
+## [0.4.1] — 2026-07-03
+
+Security hardening & critical bug fixes.
+
+### Fixed
+
+- **`verify_internal_deps` broken** (critical): removed `verify_internal_deps` call from `resolve_dependencies` — `resolve_imports` already classifies deps correctly. Also removed the dead `verify_internal_deps` function from `lang/mod.rs`.
+- **QML `import "path" as X` parsing** (important): fixed to parse content between first and second quote via `split('"').nth(1)` instead of broken `trim_matches('"')`.
+- **Symlink cycle detection** (important): `walk_dir` now tracks visited directories via `HashSet<PathBuf>` of canonicalized paths to prevent stack overflow from recursive symlinks.
+- **Absolute path guard in MCP** (important): reviewed — MCP clients always pass absolute paths, so blocking them breaks legitimate usage. Only `..` traversal is blocked. Proper fix (workspace root validation via MCP `initialize` `roots`) deferred to post-0.5.x.
+- **Cache size cap** (medium): cache load now checks `fs::metadata` before reading; files above 100 MB are rejected with a warning.
+- **`entities.len() - 1` fragile** (low): changed to `i + 1 == entities.len()` to avoid panic on empty entity slices.
+- **Silent import drops** (low): `extract_imports_from_tree` now emits `log::warn` when `utf8_text()` fails on an import node.
+
+### Added
+
+- **`--info` filter** (CLI + MCP): new `--info` parameter for `code-seek scan` and MCP `scan` tool with values `all` (default), `no-tests` (excludes test modules), `tests-only` (shows only test modules).
+- **Config default robustness**: `max_file_size_mb` in `[scan]` now correctly defaults to `10.0` even when the key is missing from a present `[scan]` section (previously silently defaulted to `0.0`, causing all files to be skipped).
+- **`save_history_by_default` removed**: the `ScanConfig` field added in `0.2.1` was silently removed — the SQLite history feature it gated is deferred to post-0.6.x. The field is no longer parsed from `.code-seek/config.toml` (unknown fields are silently ignored by the TOML parser).
+
+### Tests
+
+- New QML test: `resolves_imports_with_alias` — verifies `import "path" as X` parsing.
+- New cache test: `cache_load_oversized_file_returns_empty` — verifies 100 MB cap.
+- 4 new `filter_by_info` unit tests covering `all`, `no-tests`, `tests-only`.
+- 3 new integration tests for `--info` flag.
+
 ## [0.4.0] — 2026-07-02
 
 Release — closes 0.3.x cycle (Dependencies & robustness). First public
@@ -11,7 +184,7 @@ detection, dependency graph, syntax error detection, SHA-256 cache,
 MCP server with 4 tools (scan, entity, summary, locate), `--ignore` flag,
 language validation, and CLI filters (`--lang`, `--match`, `--max-depth`).
 
-## [0.3.4] — 2026-07-02
+## [0.3.99] — 2026-07-02
 
 ### Added
 - `--ignore <dirs>` CLI flag: comma-separated directory names to skip during walk, combined with `ignore_dirs` from config (e.g. `code-seek scan . --ignore target,node_modules`)

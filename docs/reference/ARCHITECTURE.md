@@ -29,18 +29,21 @@ Shared entity model used across all parsers and outputs:
 - `Entity` — name, type, loc, line range, children (recursive)
 - `FileResult` — path, language, loc, entity list per file
 
-### `src/scan.rs`
-Orchestrator for `code-seek scan`. Calls the walker to discover files, loads the SHA-256 cache, delegates parsing to `lang::parse_file`, applies `--match`/`--max-depth` filters, and renders output (tree or JSON). Also exposes `build_scan_results`, `results_to_json`, `find_entity`, `summarize`, and `locate` for MCP consumption.
+### `src/scan/` (`mod.rs`, `render.rs`, `filter.rs`)
+Orchestrator for `code-seek scan`. `mod.rs` calls the walker to discover files, loads the SHA-256 cache, delegates parsing to `lang::parse_file`, and exposes `build_scan_results`, `results_to_json`, `find_entity`, `summarize`, and `locate` for MCP consumption. `filter.rs` applies `--match`/`--max-depth`/`--info` filters; `render.rs` renders tree output with aligned columns.
 
 ### `src/lang/mod.rs`
-Language registry (`LANGUAGES` static array) and shared helpers:
-- `parse_source()` — centralized tree-sitter parser initialization
-- `collect_children()` — generic iterator replacing per-parser node walkers
+Language registry (`LANGUAGES` static array) and the generic parse pipeline. Each `LangDef` entry carries the language's grammar, root-level import node kinds, `parse_node` callback, and `resolve_imports` function; `run_parser()` implements parse → entities → imports → errors once for all languages. Shared helpers:
 - `detect()` — language detection by file extension
-- `parse_file()` — dispatches to the correct parser module
+- `parse_file()` / `resolve_imports()` — public API dispatching through the registry
+- `parse_source()` — centralized tree-sitter parser initialization
+- `collect_children()` / `body_children()` — generic node walkers (alphabetical order, depth guard)
+- `name_field()`, `leaf_entity()`, `container_entity()` — entity construction
+- `classify_path()` — relative-vs-package import classification
+- `Context` (`TopLevel`/`TypeBody`), `ParseOutput` — walk context and pipeline result types
 
-### `src/lang/c.rs`, `cpp.rs`, `rust.rs`, `qml.rs`
-Per-language parsers. Each implements `parse(source: &str) -> Vec<Entity>` using tree-sitter grammars. Parsers emit the canonical entity model — no language-specific output structures.
+### `src/lang/c.rs`, `cpp.rs`, `js.rs`, `python.rs`, `qml.rs`, `rust.rs`, `ts.rs`
+Per-language parsers. Each implements `parse_node(node, source, loc_map, context, depth) -> Option<Entity>` mapping tree-sitter nodes to the canonical entity model — no language-specific output structures. Family bases hold shared handling: `c_family.rs` for C/C++ (`#include` resolution, function/declaration handling) and `js::parse_common` for JS/TS.
 
 ### `src/mcp.rs`
 JSON-RPC 2.0 MCP server over stdio. Implements `initialize`, `tools/list`, and `tools/call` with 4 tools: `scan`, `entity`, `summary`, `locate`. Negotiates protocol version with the client. Logs all requests to stderr via `crate::log`.
