@@ -3,16 +3,16 @@ use std::path::Path;
 
 #[derive(Deserialize, Default)]
 #[serde(default)]
-pub struct Config {
-    pub scan: ScanConfig,
+pub(crate) struct Config {
+    pub(crate) scan: ScanConfig,
 }
 
 #[derive(Deserialize)]
 #[serde(default)]
-pub struct ScanConfig {
-    pub ignore_dirs: Vec<String>,
-    pub follow_symlinks: bool,
-    pub max_file_size_mb: f64,
+pub(crate) struct ScanConfig {
+    pub(crate) ignore_dirs: Vec<String>,
+    pub(crate) follow_symlinks: bool,
+    pub(crate) max_file_size_mb: f64,
 }
 
 impl Default for ScanConfig {
@@ -25,10 +25,37 @@ impl Default for ScanConfig {
     }
 }
 
-pub fn load() -> Config {
+pub(crate) fn load() -> Config {
     let path = Path::new(".code-seek/config.toml");
     let Ok(content) = std::fs::read_to_string(path) else {
         return Config::default();
     };
     toml::from_str(&content).unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn defaults_are_correct() {
+        let cfg = Config::default();
+        assert!(!cfg.scan.follow_symlinks);
+        assert_eq!(cfg.scan.max_file_size_mb, 10.0);
+        assert!(cfg.scan.ignore_dirs.is_empty());
+    }
+
+    #[test]
+    fn parses_valid_toml() {
+        let cfg: Config =
+            toml::from_str("[scan]\nfollow_symlinks = true\nmax_file_size_mb = 5.0").unwrap();
+        assert!(cfg.scan.follow_symlinks);
+        assert_eq!(cfg.scan.max_file_size_mb, 5.0);
+    }
+
+    #[test]
+    fn invalid_toml_produces_error() {
+        let result: Result<Config, _> = toml::from_str("not valid toml [[[");
+        assert!(result.is_err());
+    }
 }

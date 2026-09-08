@@ -4,7 +4,7 @@ use crate::lang;
 
 const ALWAYS_IGNORED: &[&str] = &[".git", ".code-seek"];
 
-pub fn walk(root: &Path, ignore_dirs: &[String], follow_symlinks: bool) -> Vec<PathBuf> {
+pub(crate) fn walk(root: &Path, ignore_dirs: &[String], follow_symlinks: bool) -> Vec<PathBuf> {
     if !follow_symlinks && root.is_symlink() {
         return Vec::new();
     }

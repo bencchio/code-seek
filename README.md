@@ -4,17 +4,13 @@ Explore the functional structure of a repository from the CLI.
 
 - **Structural tree**: classes, methods, functions, structs, traits, enums,
   components, with LOC and line numbers.
-- **Multi-language**: C, C++, Rust, QML (v0.1.x). Python, JS/TS (v0.2.x).
-- **History**: snapshots with SQLite to track changes and run diffs.
-- **Incremental**: SHA256 hashing avoids re-parsing unchanged files.
+- **Multi-language**: C, C++, Rust, QML.
 - **Error-tolerant**: partially parses even with invalid code.
 
 ## Status
 
-**v0.2.0** — stable release. `code-seek scan` parses C, C++, Rust, and QML; counts
-effective LOC; renders a tree with 8 entity types (Class, Enum, Function, Impl, Method,
-Namespace, Struct, Trait); supports `--lang` filtering; enforces `follow_symlinks`
-(default: false) and `max_file_size_mb` (default: 10) from `.code-seek/config.toml`.
+MCP server and scan CLI for C, C++, Rust, and QML, with JSON, match, and depth filters.
+See [`docs/rules/mcp.md`](docs/rules/mcp.md) for setup.
 
 ## Installation
 
@@ -44,29 +40,11 @@ code-seek --version
 # Initialize Code Seek in the current directory
 code-seek init
 
-# Analyze the codebase (v0.1.x)
+# Analyze the codebase
 code-seek scan .
 ```
 
-From v0.2.x:
-
-```bash
-# Save snapshot and view history
-code-seek scan . --save
-code-seek history list
-code-seek history show <snapshot-id>
-code-seek history diff <a> <b>
-
-# Configure
-code-seek config set scan.follow_symlinks true
-code-seek config list
-
-# Ignore directories
-code-seek ignore add "target/"
-code-seek ignore list
-```
-
-## Sample output (v0.1.x)
+## Sample output
 
 ```
 󱘗 src/main.rs  [Rust]          38 LOC  3 entities
@@ -84,12 +62,8 @@ code-seek ignore list
 
 ## Documentation
 
-- [`docs/SPECS.md`](docs/SPECS.md) — Full specification
+- [`docs/reference/SPECS.md`](docs/reference/SPECS.md) — Full specification
 
 ## Supported languages
 
-### v0.1.x
 C · C++ · Rust · QML
-
-### v0.2.x
-Python · JavaScript · TypeScript

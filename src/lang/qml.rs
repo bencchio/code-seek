@@ -1,31 +1,22 @@
-use tree_sitter::{Node, Parser};
+use tree_sitter::Node;
 
-use super::{LanguageParser, LocMap, node_lines};
+use super::{LocMap, node_lines, parse_source};
 use crate::model::{Entity, EntityType};
 
-pub struct QmlParser;
-
-impl LanguageParser for QmlParser {
-    fn parse(&self, source: &str) -> Vec<Entity> {
-        let mut parser = Parser::new();
-        parser
-            .set_language(&tree_sitter_qmljs::LANGUAGE.into())
-            .unwrap();
-        let Some(tree) = parser.parse(source.as_bytes(), None) else {
-            return Vec::new();
-        };
-        let loc_map = LocMap::build(source);
-        let mut entities = Vec::new();
-        let mut cursor = tree.root_node().walk();
-        for child in tree.root_node().children(&mut cursor) {
-            if child.kind() == "ui_object_definition"
-                && let Some(e) = parse_object(child, source, &loc_map)
-            {
-                entities.push(e);
-            }
+pub(super) fn parse_impl(source: &str, loc_map: &LocMap) -> Vec<Entity> {
+    let Some(tree) = parse_source(tree_sitter_qmljs::LANGUAGE.into(), source) else {
+        return Vec::new();
+    };
+    let mut entities = Vec::new();
+    let mut cursor = tree.root_node().walk();
+    for child in tree.root_node().children(&mut cursor) {
+        if child.kind() == "ui_object_definition"
+            && let Some(e) = parse_object(child, source, loc_map)
+        {
+            entities.push(e);
         }
-        entities
     }
+    entities
 }
 
 fn parse_object(node: Node<'_>, source: &str, loc_map: &LocMap) -> Option<Entity> {
@@ -84,24 +75,22 @@ fn parse_function(node: Node<'_>, source: &str, loc_map: &LocMap) -> Option<Enti
         .and_then(|n| n.utf8_text(src).ok())
         .map(str::to_owned)?;
     let (start_line, end_line) = node_lines(node);
-    Some(Entity {
+    Some(Entity::new(
         name,
-        entity_type: EntityType::Method,
-        loc: loc_map.count(start_line, end_line),
+        EntityType::Method,
+        loc_map.count(start_line, end_line),
         start_line,
         end_line,
-        children: Vec::new(),
-    })
+    ))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lang::LanguageParser;
     use crate::model::EntityType;
 
     fn src(s: &str) -> Vec<Entity> {
-        QmlParser.parse(s)
+        parse_impl(s, &LocMap::build(s))
     }
 
     #[test]

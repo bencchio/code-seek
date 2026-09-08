@@ -2,9 +2,12 @@ use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 use std::process;
 
+mod cache;
 mod config;
 mod init;
 mod lang;
+mod log;
+mod mcp;
 mod model;
 mod scan;
 mod walker;
@@ -26,10 +29,17 @@ enum Command {
         #[arg(long)]
         force: bool,
     },
+    Mcp,
     Scan {
         path: PathBuf,
         #[arg(long, value_delimiter = ',', value_name = "LANG")]
         lang: Vec<String>,
+        #[arg(long, default_value = "tree", value_name = "FORMAT")]
+        format: String,
+        #[arg(long = "match", value_name = "PATTERN")]
+        filter_match: Option<String>,
+        #[arg(long, value_name = "N")]
+        max_depth: Option<usize>,
     },
 }
 
@@ -37,7 +47,10 @@ fn main() {
     let cli = Cli::parse();
     let result = match cli.command {
         Command::Init { force } => init::run(force),
-        Command::Scan { path, lang } => scan::run(&path, &lang),
+        Command::Mcp => mcp::run(),
+        Command::Scan { path, lang, format, filter_match, max_depth } => {
+            scan::run(&path, &lang, &format, filter_match.as_deref().unwrap_or(""), max_depth)
+        }
     };
     if let Err(e) = result {
         eprintln!("error: {e}");

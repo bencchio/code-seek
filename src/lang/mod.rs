@@ -1,17 +1,57 @@
 use std::path::Path;
 
-use tree_sitter::Node;
+use tree_sitter::{Language, Node, Parser};
 
 use crate::model::{Entity, FileResult};
 
-pub mod c;
-pub mod cpp;
-pub mod qml;
-pub mod rust;
+pub(crate) mod c;
+pub(crate) mod cpp;
+pub(crate) mod qml;
+pub(crate) mod rust;
 
-pub(crate) trait LanguageParser {
-    fn parse(&self, source: &str) -> Vec<Entity>;
+pub(crate) struct LangDef {
+    pub(crate) canonical: &'static str,
+    pub(crate) aliases: &'static [&'static str],
+    pub(crate) extensions: &'static [&'static str],
+    pub(crate) icon: &'static str,
+    parser: fn(&str, &LocMap) -> Vec<Entity>,
 }
+
+pub(crate) static LANGUAGES: &[LangDef] = &[
+    LangDef {
+        canonical: "C",
+        aliases: &["c"],
+        extensions: &["c", "h"],
+        icon: "󰙱",
+        parser: parse_c,
+    },
+    LangDef {
+        canonical: "C++",
+        aliases: &["cpp", "c++"],
+        extensions: &["cpp", "cc", "cxx", "hpp", "hxx", "h++"],
+        icon: "󰙲",
+        parser: parse_cpp,
+    },
+    LangDef {
+        canonical: "QML",
+        aliases: &["qml"],
+        extensions: &["qml"],
+        icon: "󰈚",
+        parser: parse_qml,
+    },
+    LangDef {
+        canonical: "Rust",
+        aliases: &["rust"],
+        extensions: &["rs"],
+        icon: "󱘗",
+        parser: parse_rust,
+    },
+];
+
+fn parse_c(src: &str, loc_map: &LocMap) -> Vec<Entity> { c::parse_impl(src, loc_map) }
+fn parse_cpp(src: &str, loc_map: &LocMap) -> Vec<Entity> { cpp::parse_impl(src, loc_map) }
+fn parse_qml(src: &str, loc_map: &LocMap) -> Vec<Entity> { qml::parse_impl(src, loc_map) }
+fn parse_rust(src: &str, loc_map: &LocMap) -> Vec<Entity> { rust::parse_impl(src, loc_map) }
 
 pub(crate) struct LocMap {
     prefix: Vec<usize>,
@@ -62,34 +102,53 @@ impl LocMap {
     }
 }
 
-pub fn detect(path: &Path) -> Option<&'static str> {
-    match path.extension().and_then(|e| e.to_str()) {
-        Some("c") | Some("h") => Some("C"),
-        Some("cpp") | Some("cc") | Some("cxx") | Some("hpp") | Some("hxx") | Some("h++") => {
-            Some("C++")
-        }
-        Some("rs") => Some("Rust"),
-        Some("qml") => Some("QML"),
-        _ => None,
-    }
+pub(crate) fn parse_source(language: Language, source: &str) -> Option<tree_sitter::Tree> {
+    let mut parser = Parser::new();
+    parser.set_language(&language).expect("failed to set tree-sitter language");
+    parser.parse(source.as_bytes(), None)
 }
 
-pub fn parse_file(path: &Path, source: &str, language: &'static str) -> FileResult {
+pub(crate) fn collect_children<F>(
+    node: Node<'_>,
+    source: &str,
+    loc_map: &LocMap,
+    context: bool,
+    depth: usize,
+    f: F,
+) -> Vec<Entity>
+where
+    F: Fn(Node<'_>, &str, &LocMap, bool, usize) -> Option<Entity>,
+{
+    if depth >= 64 {
+        return Vec::new();
+    }
+    let mut entities = Vec::new();
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if let Some(e) = f(child, source, loc_map, context, depth) {
+            entities.push(e);
+        }
+    }
+    entities.sort_by(|a, b| a.name.cmp(&b.name));
+    entities
+}
+
+pub(crate) fn detect(path: &Path) -> Option<&'static str> {
+    let ext = path.extension().and_then(|e| e.to_str())?;
+    LANGUAGES
+        .iter()
+        .find(|l| l.extensions.contains(&ext))
+        .map(|l| l.canonical)
+}
+
+pub(crate) fn parse_file(path: &Path, source: &str, language: &'static str) -> FileResult {
     let loc_map = LocMap::build(source);
     let loc = loc_map.total();
-    let entities = match language {
-        "C" => c::CParser.parse(source),
-        "C++" => cpp::CppParser.parse(source),
-        "QML" => qml::QmlParser.parse(source),
-        "Rust" => rust::RustParser.parse(source),
-        _ => unreachable!("parse_file called with unrecognised language: {language}"),
+    let Some(lang_def) = LANGUAGES.iter().find(|l| l.canonical == language) else {
+        return FileResult { path: path.to_path_buf(), language, loc: 0, entities: Vec::new() };
     };
-    FileResult {
-        path: path.to_path_buf(),
-        language,
-        loc,
-        entities,
-    }
+    let entities = (lang_def.parser)(source, &loc_map);
+    FileResult { path: path.to_path_buf(), language, loc, entities }
 }
 
 pub(crate) fn node_lines(node: Node<'_>) -> (usize, usize) {

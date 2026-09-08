@@ -1,54 +1,35 @@
-use tree_sitter::{Node, Parser};
+use tree_sitter::Node;
 
-use super::{LanguageParser, LocMap, declarator_name, node_lines};
+use super::{LocMap, collect_children, declarator_name, node_lines, parse_source};
 use crate::model::{Entity, EntityType};
 
-pub struct CppParser;
-
-impl LanguageParser for CppParser {
-    fn parse(&self, source: &str) -> Vec<Entity> {
-        let mut parser = Parser::new();
-        parser
-            .set_language(&tree_sitter_cpp::LANGUAGE.into())
-            .unwrap();
-        let Some(tree) = parser.parse(source.as_bytes(), None) else {
-            return Vec::new();
-        };
-        let loc_map = LocMap::build(source);
-        parse_nodes(tree.root_node(), source, &loc_map, false)
-    }
+pub(super) fn parse_impl(source: &str, loc_map: &LocMap) -> Vec<Entity> {
+    let Some(tree) = parse_source(tree_sitter_cpp::LANGUAGE.into(), source) else {
+        return Vec::new();
+    };
+    collect_children(tree.root_node(), source, loc_map, false, 0, parse_node)
 }
 
-fn parse_nodes(node: Node<'_>, source: &str, loc_map: &LocMap, in_class: bool) -> Vec<Entity> {
-    let mut entities = Vec::new();
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        if let Some(e) = parse_node(child, source, loc_map, in_class) {
-            entities.push(e);
-        }
-    }
-    entities.sort_by(|a, b| a.name.cmp(&b.name));
-    entities
-}
-
-fn parse_node(node: Node<'_>, source: &str, loc_map: &LocMap, in_class: bool) -> Option<Entity> {
+fn parse_node(
+    node: Node<'_>,
+    source: &str,
+    loc_map: &LocMap,
+    in_class: bool,
+    depth: usize,
+) -> Option<Entity> {
     let src = source.as_bytes();
     match node.kind() {
         "function_definition" => {
             let name = declarator_name(node.child_by_field_name("declarator")?, src)?;
             let (start_line, end_line) = node_lines(node);
-            Some(Entity {
+            let entity_type = if in_class { EntityType::Method } else { EntityType::Function };
+            Some(Entity::new(
                 name,
-                entity_type: if in_class {
-                    EntityType::Method
-                } else {
-                    EntityType::Function
-                },
-                loc: loc_map.count(start_line, end_line),
+                entity_type,
+                loc_map.count(start_line, end_line),
                 start_line,
                 end_line,
-                children: Vec::new(),
-            })
+            ))
         }
         "class_specifier" | "struct_specifier" => {
             let name = node
@@ -63,7 +44,9 @@ fn parse_node(node: Node<'_>, source: &str, loc_map: &LocMap, in_class: bool) ->
             let (start_line, end_line) = node_lines(node);
             let children = node
                 .child_by_field_name("body")
-                .map(|body| parse_nodes(body, source, loc_map, true))
+                .map(|body| {
+                    collect_children(body, source, loc_map, true, depth + 1, parse_node)
+                })
                 .unwrap_or_default();
             Some(Entity {
                 name,
@@ -80,14 +63,13 @@ fn parse_node(node: Node<'_>, source: &str, loc_map: &LocMap, in_class: bool) ->
                 .and_then(|n| n.utf8_text(src).ok())
                 .map(str::to_owned)?;
             let (start_line, end_line) = node_lines(node);
-            Some(Entity {
+            Some(Entity::new(
                 name,
-                entity_type: EntityType::Enum,
-                loc: loc_map.count(start_line, end_line),
+                EntityType::Enum,
+                loc_map.count(start_line, end_line),
                 start_line,
                 end_line,
-                children: Vec::new(),
-            })
+            ))
         }
         "namespace_definition" => {
             let name = node
@@ -98,7 +80,9 @@ fn parse_node(node: Node<'_>, source: &str, loc_map: &LocMap, in_class: bool) ->
             let (start_line, end_line) = node_lines(node);
             let children = node
                 .child_by_field_name("body")
-                .map(|body| parse_nodes(body, source, loc_map, false))
+                .map(|body| {
+                    collect_children(body, source, loc_map, false, depth + 1, parse_node)
+                })
                 .unwrap_or_default();
             Some(Entity {
                 name,
@@ -116,7 +100,7 @@ fn parse_node(node: Node<'_>, source: &str, loc_map: &LocMap, in_class: bool) ->
                     child.kind(),
                     "struct_specifier" | "enum_specifier" | "class_specifier"
                 ) {
-                    return parse_node(child, source, loc_map, in_class);
+                    return parse_node(child, source, loc_map, in_class, depth);
                 }
             }
             None
@@ -128,13 +112,16 @@ fn parse_node(node: Node<'_>, source: &str, loc_map: &LocMap, in_class: bool) ->
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lang::LanguageParser;
     use crate::model::EntityType;
+
+    fn parse(src: &str) -> Vec<Entity> {
+        parse_impl(src, &LocMap::build(src))
+    }
 
     #[test]
     fn parses_class_with_methods() {
         let src = "class Vec {\npublic:\n    float dot() { return 0; }\n    float length() { return 1; }\n};";
-        let entities = CppParser.parse(src);
+        let entities = parse(src);
         assert_eq!(entities.len(), 1);
         assert_eq!(entities[0].name, "Vec");
         assert_eq!(entities[0].entity_type, EntityType::Class);
@@ -152,7 +139,7 @@ mod tests {
     #[test]
     fn parses_namespace_with_function() {
         let src = "namespace math { float clamp(float v) { return v; } }";
-        let entities = CppParser.parse(src);
+        let entities = parse(src);
         assert_eq!(entities.len(), 1);
         assert_eq!(entities[0].name, "math");
         assert_eq!(entities[0].entity_type, EntityType::Namespace);
@@ -164,7 +151,7 @@ mod tests {
     #[test]
     fn parses_struct_with_method() {
         let src = "struct Pair { int first() { return a; } int a; };";
-        let entities = CppParser.parse(src);
+        let entities = parse(src);
         assert_eq!(entities.len(), 1);
         assert_eq!(entities[0].name, "Pair");
         assert_eq!(entities[0].entity_type, EntityType::Struct);
@@ -174,7 +161,7 @@ mod tests {
 
     #[test]
     fn parses_top_level_function() {
-        let entities = CppParser.parse("int square(int x) { return x * x; }");
+        let entities = parse("int square(int x) { return x * x; }");
         assert_eq!(entities.len(), 1);
         assert_eq!(entities[0].name, "square");
         assert_eq!(entities[0].entity_type, EntityType::Function);
@@ -182,7 +169,7 @@ mod tests {
 
     #[test]
     fn parses_enum() {
-        let entities = CppParser.parse("enum class Color { Red, Green, Blue };");
+        let entities = parse("enum class Color { Red, Green, Blue };");
         assert_eq!(entities.len(), 1);
         assert_eq!(entities[0].name, "Color");
         assert_eq!(entities[0].entity_type, EntityType::Enum);
@@ -190,6 +177,6 @@ mod tests {
 
     #[test]
     fn empty_source() {
-        assert_eq!(CppParser.parse("").len(), 0);
+        assert_eq!(parse("").len(), 0);
     }
 }

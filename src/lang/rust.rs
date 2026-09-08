@@ -1,37 +1,22 @@
-use tree_sitter::{Node, Parser};
+use tree_sitter::Node;
 
-use super::{LanguageParser, LocMap, node_lines};
+use super::{LocMap, collect_children, node_lines, parse_source};
 use crate::model::{Entity, EntityType};
 
-pub struct RustParser;
-
-impl LanguageParser for RustParser {
-    fn parse(&self, source: &str) -> Vec<Entity> {
-        let mut parser = Parser::new();
-        parser
-            .set_language(&tree_sitter_rust::LANGUAGE.into())
-            .unwrap();
-        let Some(tree) = parser.parse(source.as_bytes(), None) else {
-            return Vec::new();
-        };
-        let loc_map = LocMap::build(source);
-        parse_nodes(tree.root_node(), source, &loc_map, false)
-    }
+pub(super) fn parse_impl(source: &str, loc_map: &LocMap) -> Vec<Entity> {
+    let Some(tree) = parse_source(tree_sitter_rust::LANGUAGE.into(), source) else {
+        return Vec::new();
+    };
+    collect_children(tree.root_node(), source, loc_map, false, 0, parse_node)
 }
 
-fn parse_nodes(node: Node<'_>, source: &str, loc_map: &LocMap, in_impl: bool) -> Vec<Entity> {
-    let mut entities = Vec::new();
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        if let Some(e) = parse_node(child, source, loc_map, in_impl) {
-            entities.push(e);
-        }
-    }
-    entities.sort_by(|a, b| a.name.cmp(&b.name));
-    entities
-}
-
-fn parse_node(node: Node<'_>, source: &str, loc_map: &LocMap, in_impl: bool) -> Option<Entity> {
+fn parse_node(
+    node: Node<'_>,
+    source: &str,
+    loc_map: &LocMap,
+    in_impl: bool,
+    depth: usize,
+) -> Option<Entity> {
     let src = source.as_bytes();
     match node.kind() {
         "function_item" | "function_signature_item" => {
@@ -40,18 +25,14 @@ fn parse_node(node: Node<'_>, source: &str, loc_map: &LocMap, in_impl: bool) -> 
                 .and_then(|n| n.utf8_text(src).ok())
                 .map(str::to_owned)?;
             let (start_line, end_line) = node_lines(node);
-            Some(Entity {
+            let entity_type = if in_impl { EntityType::Method } else { EntityType::Function };
+            Some(Entity::new(
                 name,
-                entity_type: if in_impl {
-                    EntityType::Method
-                } else {
-                    EntityType::Function
-                },
-                loc: loc_map.count(start_line, end_line),
+                entity_type,
+                loc_map.count(start_line, end_line),
                 start_line,
                 end_line,
-                children: Vec::new(),
-            })
+            ))
         }
         "struct_item" => {
             let name = node
@@ -59,14 +40,13 @@ fn parse_node(node: Node<'_>, source: &str, loc_map: &LocMap, in_impl: bool) -> 
                 .and_then(|n| n.utf8_text(src).ok())
                 .map(str::to_owned)?;
             let (start_line, end_line) = node_lines(node);
-            Some(Entity {
+            Some(Entity::new(
                 name,
-                entity_type: EntityType::Struct,
-                loc: loc_map.count(start_line, end_line),
+                EntityType::Struct,
+                loc_map.count(start_line, end_line),
                 start_line,
                 end_line,
-                children: Vec::new(),
-            })
+            ))
         }
         "enum_item" => {
             let name = node
@@ -74,21 +54,22 @@ fn parse_node(node: Node<'_>, source: &str, loc_map: &LocMap, in_impl: bool) -> 
                 .and_then(|n| n.utf8_text(src).ok())
                 .map(str::to_owned)?;
             let (start_line, end_line) = node_lines(node);
-            Some(Entity {
+            Some(Entity::new(
                 name,
-                entity_type: EntityType::Enum,
-                loc: loc_map.count(start_line, end_line),
+                EntityType::Enum,
+                loc_map.count(start_line, end_line),
                 start_line,
                 end_line,
-                children: Vec::new(),
-            })
+            ))
         }
         "impl_item" => {
-            let name = impl_name(node, src)?;
+            let name = impl_target_type(node, src)?;
             let (start_line, end_line) = node_lines(node);
             let children = node
                 .child_by_field_name("body")
-                .map(|body| parse_nodes(body, source, loc_map, true))
+                .map(|body| {
+                    collect_children(body, source, loc_map, true, depth + 1, parse_node)
+                })
                 .unwrap_or_default();
             Some(Entity {
                 name,
@@ -107,7 +88,9 @@ fn parse_node(node: Node<'_>, source: &str, loc_map: &LocMap, in_impl: bool) -> 
             let (start_line, end_line) = node_lines(node);
             let children = node
                 .child_by_field_name("body")
-                .map(|body| parse_nodes(body, source, loc_map, true))
+                .map(|body| {
+                    collect_children(body, source, loc_map, true, depth + 1, parse_node)
+                })
                 .unwrap_or_default();
             Some(Entity {
                 name,
@@ -125,7 +108,8 @@ fn parse_node(node: Node<'_>, source: &str, loc_map: &LocMap, in_impl: bool) -> 
                 .and_then(|n| n.utf8_text(src).ok())
                 .map(str::to_owned)?;
             let (start_line, end_line) = node_lines(node);
-            let children = parse_nodes(body, source, loc_map, false);
+            let children =
+                collect_children(body, source, loc_map, false, depth + 1, parse_node);
             Some(Entity {
                 name,
                 entity_type: EntityType::Namespace,
@@ -139,7 +123,7 @@ fn parse_node(node: Node<'_>, source: &str, loc_map: &LocMap, in_impl: bool) -> 
     }
 }
 
-fn impl_name(node: Node<'_>, src: &[u8]) -> Option<String> {
+fn impl_target_type(node: Node<'_>, src: &[u8]) -> Option<String> {
     extract_type_name(node.child_by_field_name("type")?, src)
 }
 
@@ -160,12 +144,15 @@ fn extract_type_name(node: Node<'_>, src: &[u8]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lang::LanguageParser;
     use crate::model::EntityType;
+
+    fn parse(src: &str) -> Vec<Entity> {
+        parse_impl(src, &LocMap::build(src))
+    }
 
     #[test]
     fn parses_function() {
-        let entities = RustParser.parse("fn add(a: i32, b: i32) -> i32 { a + b }");
+        let entities = parse("fn add(a: i32, b: i32) -> i32 { a + b }");
         assert_eq!(entities.len(), 1);
         assert_eq!(entities[0].name, "add");
         assert_eq!(entities[0].entity_type, EntityType::Function);
@@ -173,7 +160,7 @@ mod tests {
 
     #[test]
     fn parses_struct() {
-        let entities = RustParser.parse("struct Point { x: f32, y: f32 }");
+        let entities = parse("struct Point { x: f32, y: f32 }");
         assert_eq!(entities.len(), 1);
         assert_eq!(entities[0].name, "Point");
         assert_eq!(entities[0].entity_type, EntityType::Struct);
@@ -181,7 +168,7 @@ mod tests {
 
     #[test]
     fn parses_enum() {
-        let entities = RustParser.parse("enum Color { Red, Green, Blue }");
+        let entities = parse("enum Color { Red, Green, Blue }");
         assert_eq!(entities.len(), 1);
         assert_eq!(entities[0].name, "Color");
         assert_eq!(entities[0].entity_type, EntityType::Enum);
@@ -190,7 +177,7 @@ mod tests {
     #[test]
     fn parses_impl_with_methods() {
         let src = "impl Foo {\n    fn bar(&self) {}\n    fn baz(&self) {}\n}";
-        let entities = RustParser.parse(src);
+        let entities = parse(src);
         assert_eq!(entities.len(), 1);
         assert_eq!(entities[0].name, "Foo");
         assert_eq!(entities[0].entity_type, EntityType::Impl);
@@ -208,7 +195,7 @@ mod tests {
     #[test]
     fn parses_generic_impl() {
         let src = "impl<T> Container<T> {\n    fn len(&self) -> usize { 0 }\n}";
-        let entities = RustParser.parse(src);
+        let entities = parse(src);
         assert_eq!(entities.len(), 1);
         assert_eq!(entities[0].name, "Container");
         assert_eq!(entities[0].entity_type, EntityType::Impl);
@@ -218,7 +205,7 @@ mod tests {
     fn parses_trait_impl() {
         let src =
             "impl Display for Foo {\n    fn fmt(&self, f: &mut Formatter) -> Result { Ok(()) }\n}";
-        let entities = RustParser.parse(src);
+        let entities = parse(src);
         assert_eq!(entities.len(), 1);
         assert_eq!(entities[0].name, "Foo");
         assert_eq!(entities[0].entity_type, EntityType::Impl);
@@ -227,7 +214,7 @@ mod tests {
     #[test]
     fn parses_trait_with_methods() {
         let src = "trait Animal {\n    fn name(&self) -> &str;\n    fn speak(&self) {}\n}";
-        let entities = RustParser.parse(src);
+        let entities = parse(src);
         assert_eq!(entities.len(), 1);
         assert_eq!(entities[0].name, "Animal");
         assert_eq!(entities[0].entity_type, EntityType::Trait);
@@ -243,7 +230,7 @@ mod tests {
     #[test]
     fn parses_mod_with_items() {
         let src = "mod utils {\n    fn helper() {}\n}";
-        let entities = RustParser.parse(src);
+        let entities = parse(src);
         assert_eq!(entities.len(), 1);
         assert_eq!(entities[0].name, "utils");
         assert_eq!(entities[0].entity_type, EntityType::Namespace);
@@ -253,19 +240,19 @@ mod tests {
 
     #[test]
     fn skips_mod_without_body() {
-        let entities = RustParser.parse("mod foo;");
+        let entities = parse("mod foo;");
         assert_eq!(entities.len(), 0);
     }
 
     #[test]
     fn empty_source() {
-        assert_eq!(RustParser.parse("").len(), 0);
+        assert_eq!(parse("").len(), 0);
     }
 
     #[test]
     fn sorts_alphabetically() {
         let src = "fn zoo() {} fn alpha() {} fn mid() {}";
-        let entities = RustParser.parse(src);
+        let entities = parse(src);
         assert_eq!(entities[0].name, "alpha");
         assert_eq!(entities[1].name, "mid");
         assert_eq!(entities[2].name, "zoo");

@@ -5,6 +5,10 @@
 | Crate | Version | Purpose |
 |-------|---------|---------|
 | `clap` | 4 | CLI argument parsing (derive macro) |
+| `serde` | 1 | Serialization/deserialization (cache, entity model) |
+| `serde_json` | 1 | JSON output, MCP message format |
+| `sha2` | 0.10 | SHA-256 hashing for incremental cache |
+| `toml` | 1 | Configuration file parsing (`.code-seek/config.toml`) |
 | `tree-sitter` | 0.25 | Incremental parsing engine |
 | `tree-sitter-c` | 0.24 | C grammar (functions, structs, enums) |
 | `tree-sitter-cpp` | 0.23 | C++ grammar (classes, namespaces, methods) |
